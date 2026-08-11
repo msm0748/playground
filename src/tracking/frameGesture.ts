@@ -100,6 +100,32 @@ function tipsQuad(
   }
 }
 
+/**
+ * The tips are the outer corners of the gesture, so the opening the user
+ * actually sees between their fingers is a little smaller than they are.
+ */
+export const FRAME_INSET_RATIO = 0.1
+
+/** Pulls every corner toward the quad centre, keeping its centre and shape. */
+export function insetQuad(quad: Quad, ratio: number): Quad {
+  if (ratio <= 0) return quad
+  const scale = 1 - ratio
+  const centerX = quad.points.reduce((sum, p) => sum + p.x, 0) / 4
+  const centerY = quad.points.reduce((sum, p) => sum + p.y, 0) / 4
+  const pull = (point: Point): Point => ({
+    x: centerX + (point.x - centerX) * scale,
+    y: centerY + (point.y - centerY) * scale,
+  })
+  return {
+    points: [
+      pull(quad.points[0]),
+      pull(quad.points[1]),
+      pull(quad.points[2]),
+      pull(quad.points[3]),
+    ],
+  }
+}
+
 function quadBounds(quad: Quad): { width: number; height: number; area: number } {
   const xs = quad.points.map((p) => p.x)
   const ys = quad.points.map((p) => p.y)
@@ -129,8 +155,10 @@ function isValidQuad(
 export function createFrameGesture(options?: {
   fadeMs?: number
   holdMs?: number
+  insetRatio?: number
   lerpAlpha?: number
 }) {
+  const insetRatio = options?.insetRatio ?? FRAME_INSET_RATIO
   const fadeMs = options?.fadeMs ?? 250
   /**
    * MediaPipe routinely misses a hand for a few frames once it drifts off
@@ -170,7 +198,10 @@ export function createFrameGesture(options?: {
     const keeping = phase === 'active' || phase === 'fading'
     const minSideRatio = keeping ? keepMinSideRatio : enterMinSideRatio
     const raw = paired
-      ? tipsQuad(paired[0], paired[1], videoSize.width, videoSize.height)
+      ? insetQuad(
+          tipsQuad(paired[0], paired[1], videoSize.width, videoSize.height),
+          insetRatio,
+        )
       : null
     const framing =
       !!raw &&

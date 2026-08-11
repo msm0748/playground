@@ -30,7 +30,7 @@ describe('createFrameGesture', () => {
   })
 
   it('activates on two-hand tips and returns a non-axis-aligned quad', () => {
-    const g = createFrameGesture({ lerpAlpha: 1 })
+    const g = createFrameGesture({ insetRatio: 0, lerpAlpha: 1 })
     const left = hand('Left', { index: [0.28, 0.28], thumb: [0.32, 0.55] })
     const right = hand('Right', { index: [0.72, 0.32], thumb: [0.68, 0.58] })
     const r = g.update([left, right], { width: 1000, height: 1000 }, 0)
@@ -44,7 +44,7 @@ describe('createFrameGesture', () => {
   })
 
   it('pairs hands by position even when MediaPipe labels are both Left', () => {
-    const g = createFrameGesture({ lerpAlpha: 1 })
+    const g = createFrameGesture({ insetRatio: 0, lerpAlpha: 1 })
     const a = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
     const b = hand('Left', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
     const r = g.update([a, b], { width: 1000, height: 1000 }, 0)
@@ -54,7 +54,7 @@ describe('createFrameGesture', () => {
   })
 
   it('keeps tracking when hands move closer together', () => {
-    const g = createFrameGesture({ lerpAlpha: 1 })
+    const g = createFrameGesture({ insetRatio: 0, lerpAlpha: 1 })
     const openLeft = hand('Left', { index: [0.25, 0.3], thumb: [0.25, 0.55] })
     const openRight = hand('Right', { index: [0.75, 0.3], thumb: [0.75, 0.55] })
     expect(
@@ -71,6 +71,34 @@ describe('createFrameGesture', () => {
     expect(r.quad!.points[1].x - r.quad!.points[0].x).toBeCloseTo(160, 0)
   })
 
+  it('insets the frame inside the finger tips by default', () => {
+    const g = createFrameGesture({ lerpAlpha: 1 })
+    const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.7] })
+    const right = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.7] })
+    const r = g.update([left, right], { width: 1000, height: 1000 }, 0)
+    const [topLeft, topRight, , bottomLeft] = r.quad!.points
+
+    // Same centre, 10% smaller than the 400 x 400 box the tips span.
+    expect(topRight.x - topLeft.x).toBeCloseTo(360, 5)
+    expect(bottomLeft.y - topLeft.y).toBeCloseTo(360, 5)
+    expect((topLeft.x + topRight.x) / 2).toBeCloseTo(500, 5)
+    expect((topLeft.y + bottomLeft.y) / 2).toBeCloseTo(500, 5)
+  })
+
+  it('keeps the quad untouched at a zero inset', async () => {
+    const { insetQuad } = await import('./frameGesture')
+    const quad = {
+      points: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+    } as never
+
+    expect(insetQuad(quad, 0)).toBe(quad)
+  })
+
   it('rejects frames that are extremely small', () => {
     const g = createFrameGesture({ lerpAlpha: 1 })
     const left = hand('Left', { index: [0.495, 0.495], thumb: [0.495, 0.505] })
@@ -80,7 +108,7 @@ describe('createFrameGesture', () => {
   })
 
   it('smooths quad points with default lerpAlpha 0.35', () => {
-    const g = createFrameGesture()
+    const g = createFrameGesture({ insetRatio: 0 })
     const leftA = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
     const rightA = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
     const size = { width: 1000, height: 1000 }
