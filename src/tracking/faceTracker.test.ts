@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  createFaceSampleHold,
   expressionFromBlendshapes,
   poseFromLandmarks,
   selectAnimeExpression,
+  type FaceSample,
 } from './faceTracker'
 
 function blankMesh() {
@@ -29,6 +31,48 @@ describe('poseFromLandmarks', () => {
     expect(pose!.rotation).toBeCloseTo(0, 2)
     expect(pose!.center.x).toBeGreaterThan(450)
     expect(pose!.center.x).toBeLessThan(550)
+  })
+})
+
+describe('createFaceSampleHold', () => {
+  const sample = (x: number): FaceSample => ({
+    pose: { center: { x, y: 100 }, width: 200, height: 240, rotation: 0 },
+    expression: { blinkLeft: 0, blinkRight: 0, jawOpen: 0 },
+  })
+
+  it('keeps the last face through a short detection gap', () => {
+    const hold = createFaceSampleHold(300)
+    const first = sample(500)
+
+    expect(hold.update(first, 0)).toBe(first)
+    expect(hold.update(null, 100)).toBe(first)
+    expect(hold.update(null, 300)).toBe(first)
+  })
+
+  it('drops the face once the hold window expires', () => {
+    const hold = createFaceSampleHold(300)
+
+    hold.update(sample(500), 0)
+    expect(hold.update(null, 301)).toBeNull()
+    expect(hold.update(null, 302)).toBeNull()
+  })
+
+  it('measures the window from the newest detection, not the first', () => {
+    const hold = createFaceSampleHold(300)
+    const latest = sample(600)
+
+    hold.update(sample(500), 0)
+    expect(hold.update(latest, 250)).toBe(latest)
+    expect(hold.update(null, 500)).toBe(latest)
+    expect(hold.update(null, 600)).toBeNull()
+  })
+
+  it('forgets the held face after a reset', () => {
+    const hold = createFaceSampleHold(300)
+
+    hold.update(sample(500), 0)
+    hold.reset()
+    expect(hold.update(null, 10)).toBeNull()
   })
 })
 

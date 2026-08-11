@@ -45,6 +45,37 @@ export type FaceTracker = {
   close: () => void
 }
 
+/** Detection drops for a frame or two on fast head turns; bridge those gaps. */
+export const FACE_HOLD_MS = 300
+
+export type FaceSampleHold = {
+  update: (sample: FaceSample | null, nowMs: number) => FaceSample | null
+  reset: () => void
+}
+
+/**
+ * Keeps the last detected face for a short window so a missed frame does not
+ * make anything anchored to the face blink out and back.
+ */
+export function createFaceSampleHold(holdMs: number = FACE_HOLD_MS): FaceSampleHold {
+  let last: { sample: FaceSample; atMs: number } | null = null
+
+  return {
+    update(sample, nowMs) {
+      if (sample) {
+        last = { sample, atMs: nowMs }
+        return sample
+      }
+      if (last && nowMs - last.atMs <= holdMs) return last.sample
+      last = null
+      return null
+    },
+    reset() {
+      last = null
+    },
+  }
+}
+
 export type AnimeExpressionKey =
   | 'neutral'
   | 'winkLeft'

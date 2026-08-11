@@ -23,6 +23,11 @@ export async function createHandTracker(): Promise<HandTracker> {
     },
     runningMode: 'VIDEO',
     numHands: 2,
+    // Detection stays at the default; presence and tracking are loosened so a
+    // hand that drifts off centre or clips the view keeps its landmarks.
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.3,
+    minTrackingConfidence: 0.3,
   })
 
   return {

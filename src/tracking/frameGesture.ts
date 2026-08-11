@@ -129,9 +129,16 @@ function isValidQuad(
 
 export function createFrameGesture(options?: {
   fadeMs?: number
+  holdMs?: number
   lerpAlpha?: number
 }) {
   const fadeMs = options?.fadeMs ?? 250
+  /**
+   * MediaPipe routinely misses a hand for a few frames once it drifts off
+   * centre or clips the edge of the view, so keep the frame fully active that
+   * long before fading. Re-acquiring within the window is seamless.
+   */
+  const holdMs = options?.holdMs ?? 400
   const lerpAlpha = options?.lerpAlpha ?? 0.35
   // Soft enter; even softer keep so closing hands doesn't drop tracking
   const enterMinSideRatio = 0.015
@@ -186,7 +193,13 @@ export function createFrameGesture(options?: {
     }
 
     if (phase === 'active' || phase === 'fading') {
-      if (fadeStartMs === null) fadeStartMs = lastActiveMs ?? nowMs
+      const lostSinceMs = lastActiveMs ?? nowMs
+      // Hold the last frame at full strength while detection recovers.
+      if (phase === 'active' && nowMs - lostSinceMs < holdMs) {
+        return { phase, quad: lastQuad, alpha: 1 }
+      }
+
+      if (fadeStartMs === null) fadeStartMs = lostSinceMs + holdMs
       const t = Math.min(1, (nowMs - fadeStartMs) / fadeMs)
       const alpha = 1 - t
       if (t >= 1) {
