@@ -9,6 +9,7 @@ type StatusOverlayProps = {
   gesturePhase: GesturePhase
   onStart: () => void
   onRestart: () => void
+  onRetryTracker: () => void
 }
 
 export function StatusOverlay({
@@ -19,6 +20,7 @@ export function StatusOverlay({
   gesturePhase,
   onStart,
   onRestart,
+  onRetryTracker,
 }: StatusOverlayProps) {
   if (cameraStatus === 'idle') {
     return (
@@ -53,6 +55,9 @@ export function StatusOverlay({
     return (
       <div className="status-overlay status-overlay--center">
         <p role="alert">{trackerError}</p>
+        <button type="button" onClick={onRetryTracker}>
+          다시 시도
+        </button>
       </div>
     )
   }

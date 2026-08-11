@@ -15,6 +15,7 @@ describe('StatusOverlay', () => {
         gesturePhase="idle"
         onStart={onStart}
         onRestart={vi.fn()}
+        onRetryTracker={vi.fn()}
       />,
     )
 
@@ -32,6 +33,7 @@ describe('StatusOverlay', () => {
         gesturePhase="idle"
         onStart={vi.fn()}
         onRestart={vi.fn()}
+        onRetryTracker={vi.fn()}
       />,
     )
 
@@ -46,6 +48,7 @@ describe('StatusOverlay', () => {
         gesturePhase="idle"
         onStart={vi.fn()}
         onRestart={vi.fn()}
+        onRetryTracker={vi.fn()}
       />,
     )
 
@@ -62,6 +65,7 @@ describe('StatusOverlay', () => {
         gesturePhase="idle"
         onStart={vi.fn()}
         onRestart={vi.fn()}
+        onRetryTracker={vi.fn()}
       />,
     )
 
@@ -76,10 +80,33 @@ describe('StatusOverlay', () => {
         gesturePhase="idle"
         onStart={vi.fn()}
         onRestart={vi.fn()}
+        onRetryTracker={vi.fn()}
       />,
     )
 
     expect(screen.getByRole('alert').textContent).toContain('카메라 실패')
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeTruthy()
+  })
+
+  it('retries the tracker without touching the camera', () => {
+    const onRetryTracker = vi.fn()
+    const onRestart = vi.fn()
+
+    render(
+      <StatusOverlay
+        cameraStatus="live"
+        cameraError={null}
+        trackerLoading={false}
+        trackerError="모델을 불러올 수 없습니다"
+        gesturePhase="idle"
+        onStart={vi.fn()}
+        onRestart={onRestart}
+        onRetryTracker={onRetryTracker}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+    expect(onRetryTracker).toHaveBeenCalledOnce()
+    expect(onRestart).not.toHaveBeenCalled()
   })
 })

@@ -16,6 +16,7 @@ function App() {
   )
   const [trackerError, setTrackerError] = useState<string | null>(null)
   const [trackerLoading, setTrackerLoading] = useState(false)
+  const [trackerKey, setTrackerKey] = useState(0)
   const [gesturePhase, setGesturePhase] = useState<GesturePhase>('idle')
 
   useEffect(() => {
@@ -45,6 +46,13 @@ function App() {
     setTrackerError(message)
   }, [])
 
+  const handleRetryTracker = useCallback(() => {
+    setTrackerError(null)
+    setGesturePhase('idle')
+    setTrackerLoading(true)
+    setTrackerKey((key) => key + 1)
+  }, [])
+
   return (
     <main className="app">
       <video
@@ -59,6 +67,7 @@ function App() {
           videoRef={videoRef}
           settings={settings}
           paused={paused}
+          trackerKey={trackerKey}
           onPhaseChange={handlePhaseChange}
           onTrackerError={handleTrackerError}
         />
@@ -76,6 +85,7 @@ function App() {
         gesturePhase={gesturePhase}
         onStart={() => void start()}
         onRestart={() => void restart()}
+        onRetryTracker={handleRetryTracker}
       />
     </main>
   )
