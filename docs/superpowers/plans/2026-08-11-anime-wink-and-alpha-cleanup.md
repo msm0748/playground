@@ -13,6 +13,7 @@
 - Left and right always mean anatomical MediaPipe labels, never raw screen coordinates.
 - Do not swap wink keys when `settings.mirror` changes; the existing sprite transform owns mirroring.
 - Keep every anime asset exactly 1024×1024 with alpha and the current character registration.
+- Share the cleaned alpha silhouette outside the face keep ellipse; preserve each expression's original alpha inside the face, including eye and mouth cutouts.
 - Preserve the existing face pose, hand-frame mask, scale, rotation, palette, hairstyle, and expression artwork outside the edited eye regions.
 - Do not add an npm image-processing dependency or regenerate the entire character.
 - Full blink wins when both eyes are closed; mouth opening selects the corresponding mouth variant.
@@ -204,7 +205,7 @@ git commit -m "실제 눈과 대응하는 좌우 윙크 상태 선택"
 
 **Interfaces:**
 - Consumes: four existing registered 1024×1024 RGBA source frames.
-- Produces: the eight exact asset paths listed above with one shared alpha channel.
+- Produces: the eight exact asset paths listed above with one shared exterior silhouette and expression-specific face-interior alpha.
 
 - [ ] **Step 1: Add the failing verifier first**
 
@@ -219,10 +220,12 @@ guard alphaAt(0, 0) == 0,
       alphaAt(1023, 1023) == 0 else {
   fail("\(path): corners must be transparent")
 }
-guard alphaBytes == referenceAlphaBytes else {
-  fail("\(path): silhouette differs from anime-face-overlay.png")
+guard exteriorAlphaBytes == referenceExteriorAlphaBytes else {
+  fail("\(path): exterior silhouette differs from anime-face-overlay.png")
 }
 ```
+
+`exteriorAlphaBytes` contains only pixels outside `faceKeepEllipse`; the verifier must not require eye or mouth alpha inside that ellipse to match the neutral frame.
 
 Add scripts to `package.json`:
 
@@ -258,7 +261,7 @@ Decode with `CGImageSourceCreateWithURL`, draw into an 8-bit premultiplied-last 
 
 - [ ] **Step 4: Build one clean shared alpha matte**
 
-Derive the matte from `anime-face-overlay.png` and apply these exact rules:
+Derive the exterior matte from `anime-face-overlay.png` and apply these exact rules:
 
 ```swift
 let faceKeepEllipse = Ellipse(cx: 512, cy: 565, rx: 285, ry: 330)
@@ -267,7 +270,7 @@ if !faceKeepEllipse.contains(x, y) && isNeutralResidue { alpha = 0 }
 if alpha <= 8 { alpha = 0 }
 ```
 
-Contract only partially transparent outer-edge pixels by one 3×3 minimum-filter pass, then feather that matte with a 0.25-pixel equivalent linear blend. Do not contract fully opaque interior pixels. Copy the resulting alpha bytes to all eight output frames and zero RGB when alpha becomes zero.
+Contract only partially transparent outer-edge pixels outside `faceKeepEllipse` by one 3×3 minimum-filter pass, then feather that exterior matte with a 0.25-pixel equivalent linear blend. Do not contract fully opaque interior pixels. Copy the cleaned alpha only outside `faceKeepEllipse`. Inside the ellipse, preserve each source frame's original alpha; inside a wink eye patch, feather the closed-eye source alpha together with its RGB. Zero RGB whenever the final alpha becomes zero.
 
 - [ ] **Step 5: Composite one closed eye at a time**
 
@@ -297,7 +300,7 @@ Expected: eight PNGs are written, each reported as `1024x1024 RGBA`.
 
 Run: `npm run assets:anime:verify`
 
-Expected: PASS with `Verified 8 anime face assets with shared alpha`.
+Expected: PASS with `Verified 8 anime face assets with shared exterior alpha`.
 
 - [ ] **Step 7: Inspect all eight on light and dark backgrounds**
 

@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "assets:anime": "swift scripts/build-anime-face-assets.swift",
+    "assets:anime:verify": "swift scripts/verify-anime-face-assets.swift",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint src",
