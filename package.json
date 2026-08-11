@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "assets:anime": "swift scripts/build-anime-face-assets.swift",
-    "assets:anime:verify": "swift scripts/verify-anime-face-assets.swift",
+    "assets:anime:verify": "swift scripts/verify-anime-face-assets.swift && swift scripts/verify-anime-face-reproducibility.swift",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint src",

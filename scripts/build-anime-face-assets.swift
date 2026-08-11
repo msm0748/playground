@@ -312,10 +312,11 @@ func validateInMemory(_ outputs: [(path: String, image: RGBAImage)]) throws {
 }
 
 do {
-  let neutral = try loadPNG("public/anime-face-overlay.png")
-  let blink = try loadPNG("public/anime-face-eyes-closed.png")
-  let mouth = try loadPNG("public/anime-face-mouth-open.png")
-  let blinkMouth = try loadPNG("public/anime-face-blink-mouth.png")
+  let sourceDirectory = "assets/anime-face-sources"
+  let neutral = try loadPNG("\(sourceDirectory)/anime-face-overlay.png")
+  let blink = try loadPNG("\(sourceDirectory)/anime-face-eyes-closed.png")
+  let mouth = try loadPNG("\(sourceDirectory)/anime-face-mouth-open.png")
+  let blinkMouth = try loadPNG("\(sourceDirectory)/anime-face-blink-mouth.png")
   let sourceImages = [neutral, blink, mouth, blinkMouth]
   guard sourceImages.allSatisfy({ $0.width == 1024 && $0.height == 1024 }) else {
     throw AssetError.message("source frames must all be registered 1024x1024 images")
