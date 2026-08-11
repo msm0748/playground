@@ -145,6 +145,7 @@ body {
 
 .controls__toggle {
   display: flex;
+  min-height: 44px;
   gap: 0.5rem;
   align-items: center;
   font-size: 0.875rem;
