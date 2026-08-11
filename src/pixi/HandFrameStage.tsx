@@ -28,15 +28,15 @@ import { registerPixi } from './extendPixi'
 
 registerPixi()
 
-const ANIME_FACE_ASSETS: Record<AnimeExpressionKey, string> = {
-  neutral: '/anime-face-overlay.png?v=3',
-  winkLeft: '/anime-face-eyes-closed.png?v=1',
-  winkRight: '/anime-face-eyes-closed.png?v=1',
-  blink: '/anime-face-eyes-closed.png?v=1',
-  mouth: '/anime-face-mouth-open.png?v=1',
-  winkLeftMouth: '/anime-face-blink-mouth.png?v=1',
-  winkRightMouth: '/anime-face-blink-mouth.png?v=1',
-  blinkMouth: '/anime-face-blink-mouth.png?v=1',
+export const ANIME_FACE_ASSETS: Record<AnimeExpressionKey, string> = {
+  neutral: '/anime-face-overlay.png?v=4',
+  blink: '/anime-face-eyes-closed.png?v=2',
+  mouth: '/anime-face-mouth-open.png?v=2',
+  blinkMouth: '/anime-face-blink-mouth.png?v=2',
+  winkLeft: '/anime-face-wink-left.png?v=1',
+  winkRight: '/anime-face-wink-right.png?v=1',
+  winkLeftMouth: '/anime-face-wink-left-mouth.png?v=1',
+  winkRightMouth: '/anime-face-wink-right-mouth.png?v=1',
 }
 
 type CoverLayout = {
