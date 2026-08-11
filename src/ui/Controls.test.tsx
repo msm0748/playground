@@ -29,5 +29,8 @@ describe('Controls', () => {
       ...DEFAULT_FILTER_SETTINGS,
       mirror: false,
     })
+
+    fireEvent.click(screen.getByRole('button', { name: '카메라 재시작' }))
+    expect(onRestartCamera).toHaveBeenCalledTimes(1)
   })
 })

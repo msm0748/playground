@@ -7,7 +7,9 @@ type StageProps = {
   settings: FilterSettings
   paused: boolean
   trackerKey?: number
-  onTrackerError?: (message: string) => void
+  resourceKey?: number
+  onHandTrackerError?: (message: string) => void
+  onModeResourceError?: (mode: FilterMode, message: string) => void
 }
 
 const mocks = vi.hoisted(() => ({
@@ -17,7 +19,9 @@ const mocks = vi.hoisted(() => ({
     settings: FilterSettings
     paused: boolean
     trackerKey?: number
-    onTrackerError?: (message: string) => void
+    resourceKey?: number
+    onHandTrackerError?: (message: string) => void
+    onModeResourceError?: (mode: FilterMode, message: string) => void
   }>,
 }))
 
@@ -72,12 +76,12 @@ describe('App controls and visibility', () => {
     })
   })
 
-  it('recreates the tracker on retry without restarting the camera', async () => {
+  it('retries a shared hand-tracker failure without restarting the camera or mode resources', async () => {
     render(<App />)
 
     expect(mocks.stageProps.at(-1)?.trackerKey).toBe(0)
 
-    const reportError = mocks.stageProps.at(-1)?.onTrackerError
+    const reportError = mocks.stageProps.at(-1)?.onHandTrackerError
     expect(reportError).toBeTypeOf('function')
     act(() => {
       reportError?.('모델을 불러올 수 없습니다')
@@ -92,7 +96,47 @@ describe('App controls and visibility', () => {
     await waitFor(() => {
       expect(mocks.stageProps.at(-1)?.trackerKey).toBe(1)
     })
+    expect(mocks.stageProps.at(-1)?.resourceKey).toBe(0)
     expect(mocks.restart).not.toHaveBeenCalled()
     expect(screen.getByText('모델 로딩 중…')).toBeTruthy()
+  })
+
+  it('retries only the failed resources for the active mode', async () => {
+    render(<App />)
+
+    act(() => {
+      mocks.stageProps.at(-1)?.onModeResourceError?.(
+        'png',
+        'PNG 에셋을 불러올 수 없습니다',
+      )
+    })
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    await waitFor(() => {
+      expect(mocks.stageProps.at(-1)?.resourceKey).toBe(1)
+    })
+    expect(mocks.stageProps.at(-1)?.trackerKey).toBe(0)
+    expect(mocks.restart).not.toHaveBeenCalled()
+    expect(screen.queryByText('모델 로딩 중…')).toBeNull()
+  })
+
+  it('clears an error owned by the departed mode', () => {
+    render(<App />)
+
+    act(() => {
+      mocks.stageProps.at(-1)?.onModeResourceError?.(
+        'png',
+        'PNG 에셋을 불러올 수 없습니다',
+      )
+    })
+    expect(screen.getByRole('alert').textContent).toBe(
+      'PNG 에셋을 불러올 수 없습니다',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 모드' }))
+
+    expect(screen.queryByText('PNG 에셋을 불러올 수 없습니다')).toBeNull()
+    expect(screen.queryByText('모델 로딩 중…')).toBeNull()
+    expect(mocks.stageProps.at(-1)?.mode).toBe('prompt')
   })
 })

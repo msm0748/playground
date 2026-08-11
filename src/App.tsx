@@ -15,13 +15,19 @@ function App() {
   const [paused, setPaused] = useState(
     () => document.visibilityState === 'hidden',
   )
-  const [trackerError, setTrackerError] = useState<string | null>(null)
+  const [handTrackerError, setHandTrackerError] = useState<string | null>(null)
+  const [modeResourceError, setModeResourceError] = useState<{
+    mode: FilterMode
+    message: string
+  } | null>(null)
   const [trackerLoading, setTrackerLoading] = useState(false)
   const [trackerKey, setTrackerKey] = useState(0)
+  const [resourceKey, setResourceKey] = useState(0)
   const [gesturePhase, setGesturePhase] = useState<GesturePhase>('idle')
 
   useEffect(() => {
-    setTrackerError(null)
+    setHandTrackerError(null)
+    setModeResourceError(null)
     setGesturePhase('idle')
     setTrackerLoading(state.status === 'live')
   }, [state.status])
@@ -42,17 +48,42 @@ function App() {
     setGesturePhase(phase)
   }, [])
 
-  const handleTrackerError = useCallback((message: string) => {
+  const handleHandTrackerError = useCallback((message: string) => {
     setTrackerLoading(false)
-    setTrackerError(message)
+    setHandTrackerError(message)
+  }, [])
+
+  const handleModeResourceError = useCallback(
+    (errorMode: FilterMode, message: string) => {
+      setTrackerLoading(false)
+      setModeResourceError({ mode: errorMode, message })
+    },
+    [],
+  )
+
+  const handleModeChange = useCallback((nextMode: FilterMode) => {
+    setModeResourceError(null)
+    setGesturePhase('idle')
+    setMode(nextMode)
   }, [])
 
   const handleRetryTracker = useCallback(() => {
-    setTrackerError(null)
+    const retryingHandTracker = handTrackerError !== null
+    if (handTrackerError) {
+      setTrackerKey((key) => key + 1)
+    }
+    if (modeResourceError?.mode === mode) {
+      setResourceKey((key) => key + 1)
+    }
+    setHandTrackerError(null)
+    setModeResourceError(null)
     setGesturePhase('idle')
-    setTrackerLoading(true)
-    setTrackerKey((key) => key + 1)
-  }, [])
+    setTrackerLoading(retryingHandTracker)
+  }, [handTrackerError, mode, modeResourceError])
+
+  const trackerError =
+    handTrackerError ??
+    (modeResourceError?.mode === mode ? modeResourceError.message : null)
 
   return (
     <main className="app">
@@ -70,14 +101,16 @@ function App() {
           settings={settings}
           paused={paused}
           trackerKey={trackerKey}
+          resourceKey={resourceKey}
           onPhaseChange={handlePhaseChange}
-          onTrackerError={handleTrackerError}
+          onHandTrackerError={handleHandTrackerError}
+          onModeResourceError={handleModeResourceError}
         />
       )}
       <Controls
         mode={mode}
         settings={settings}
-        onModeChange={setMode}
+        onModeChange={handleModeChange}
         onChange={setSettings}
         onRestartCamera={() => void restart()}
       />

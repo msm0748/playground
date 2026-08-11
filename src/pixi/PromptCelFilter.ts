@@ -1,9 +1,5 @@
 import { defaultFilterVert, Filter, GlProgram } from 'pixi.js'
 
-// Conservative one-pass budget: one center, four smoothing cardinals, and eight Sobel neighbors.
-// The shader reuses the center/cardinal values, so it performs only nine unique texture reads.
-export const PROMPT_CEL_SAMPLE_COUNT = 13
-
 const fragment = `
 in vec2 vTextureCoord;
 out vec4 finalColor;
@@ -86,7 +82,7 @@ void main(void) {
   vec3 saturated = vec3(smoothLuma) + (smoothColor - vec3(smoothLuma)) * 1.12;
   vec3 contrasted = (saturated - vec3(0.5)) * 1.08 + vec3(0.5);
   vec3 shaped = clamp(contrasted, 0.0, 1.0);
-  vec3 posterized = floor(shaped * 6.0 + 0.5) / 6.0;
+  vec3 posterized = floor(shaped * 5.0 + 0.5) / 5.0;
 
   vec3 topLeftColor = sampleStraight(vec2(-texel.x, -texel.y));
   vec3 topRightColor = sampleStraight(vec2(texel.x, -texel.y));
@@ -100,7 +96,7 @@ void main(void) {
   );
 
   float luma = sampleLuma(posterized);
-  float band = floor(luma * 4.0 + 0.5) / 4.0;
+  float band = min(floor(luma * 4.0), 3.0) / 3.0;
   vec3 celColor = posterized * mix(0.68, 1.12, band);
   float ink = smoothstep(0.08, 0.22, sobelGradient) * 0.9;
   vec3 inkColor = vec3(0.06, 0.035, 0.03);

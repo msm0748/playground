@@ -1,4 +1,36 @@
-import { describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { render, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const lifecycleMocks = vi.hoisted(() => ({
+  createHandTracker: vi.fn(),
+  createFaceTracker: vi.fn(),
+  loadAsset: vi.fn(),
+  unloadAsset: vi.fn(),
+}))
+
+vi.mock('pixi.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('pixi.js')>()
+  return {
+    ...actual,
+    Assets: {
+      load: lifecycleMocks.loadAsset,
+      unload: lifecycleMocks.unloadAsset,
+    },
+  }
+})
+
+vi.mock('../tracking/handTracker', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../tracking/handTracker')>()
+  return { ...actual, createHandTracker: lifecycleMocks.createHandTracker }
+})
+
+vi.mock('../tracking/faceTracker', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../tracking/faceTracker')>()
+  return { ...actual, createFaceTracker: lifecycleMocks.createFaceTracker }
+})
 
 vi.mock('@pixi/react', () => ({
   Application: () => null,
@@ -7,6 +39,25 @@ vi.mock('@pixi/react', () => ({
     app: { screen: { width: 0, height: 0 } },
   }),
 }))
+
+beforeEach(() => {
+  lifecycleMocks.createHandTracker.mockReset()
+  lifecycleMocks.createFaceTracker.mockReset()
+  lifecycleMocks.loadAsset.mockReset()
+  lifecycleMocks.unloadAsset.mockReset()
+  lifecycleMocks.createHandTracker.mockResolvedValue({
+    detect: vi.fn(() => []),
+    close: vi.fn(),
+  })
+  lifecycleMocks.createFaceTracker.mockResolvedValue({
+    detect: vi.fn(() => null),
+    close: vi.fn(),
+  })
+  lifecycleMocks.loadAsset.mockResolvedValue({ width: 512, height: 512 })
+  lifecycleMocks.unloadAsset.mockResolvedValue(undefined)
+  vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+})
 
 describe('HandFrameStage layout', () => {
   it('describes the resources owned by each filter mode', async () => {
@@ -33,12 +84,12 @@ describe('HandFrameStage layout', () => {
 
   it('does not load anime assets for prompt mode', async () => {
     const { createModeResources } = await import('./HandFrameStage')
-    const loadAnimeTexture = vi.fn()
+    const texturePool = { acquire: vi.fn() }
 
-    const resources = await createModeResources('prompt', loadAnimeTexture)
+    const resources = await createModeResources('prompt', texturePool)
 
     expect(resources.mode).toBe('prompt')
-    expect(loadAnimeTexture).not.toHaveBeenCalled()
+    expect(texturePool.acquire).not.toHaveBeenCalled()
     resources.filter.destroy()
   })
 
@@ -123,6 +174,166 @@ describe('HandFrameStage layout', () => {
     expect(transform.y).toBe(360)
     expect(transform.scale).toBeCloseTo((200 * 1.35) / 512, 5)
     expect(transform.rotation).toBeCloseTo(0.1, 5)
+  })
+})
+
+describe('anime texture lifecycle', () => {
+  it('unloads an asset only after its final overlapping generation releases it', async () => {
+    const { createAnimeTexturePool } = await import('./HandFrameStage')
+    const texture = { width: 512, height: 512 }
+    const load = vi.fn(async () => texture as never)
+    const unload = vi.fn(async () => undefined)
+    const pool = createAnimeTexturePool(load, unload)
+
+    const first = await pool.acquire('/face.png')
+    const second = await pool.acquire('/face.png')
+
+    await first.release()
+    expect(unload).not.toHaveBeenCalled()
+
+    await second.release()
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(unload).toHaveBeenCalledExactlyOnceWith('/face.png')
+  })
+
+  it('waits for a final unload before a later generation reloads the same asset', async () => {
+    const { createAnimeTexturePool } = await import('./HandFrameStage')
+    let finishUnload: (() => void) | undefined
+    const unloadGate = new Promise<void>((resolve) => {
+      finishUnload = resolve
+    })
+    const load = vi.fn(async () => ({ width: 512, height: 512 }) as never)
+    const unload = vi.fn(() => unloadGate)
+    const pool = createAnimeTexturePool(load, unload)
+    const first = await pool.acquire('/face.png')
+
+    const releasing = first.release()
+    const nextLeasePromise = pool.acquire('/face.png')
+    await Promise.resolve()
+    expect(load).toHaveBeenCalledTimes(1)
+
+    finishUnload?.()
+    await releasing
+    const nextLease = await nextLeasePromise
+    expect(load).toHaveBeenCalledTimes(2)
+    await nextLease.release()
+  })
+
+  it('keeps the mounted hand tracker across a mode switch and releases PNG assets', async () => {
+    const { ANIME_FACE_ASSETS, StageContent } =
+      await import('./HandFrameStage')
+    const video = document.createElement('video')
+    const common = {
+      video,
+      settings: {
+        levels: 5,
+        edgeStrength: 0.65,
+        tint: 0.1,
+        mirror: true,
+      },
+      paused: false,
+    }
+    const view = render(
+      createElement(StageContent, { ...common, mode: 'png' }),
+    )
+
+    await waitFor(() => {
+      expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+      expect(lifecycleMocks.loadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length,
+      )
+    })
+
+    view.rerender(
+      createElement(StageContent, { ...common, mode: 'png', resourceKey: 1 }),
+    )
+    await waitFor(() => {
+      expect(lifecycleMocks.loadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length * 2,
+      )
+    })
+    expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+
+    view.rerender(createElement(StageContent, { ...common, mode: 'prompt' }))
+
+    await waitFor(() => {
+      expect(lifecycleMocks.unloadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length * 2,
+      )
+    })
+    expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+    view.unmount()
+  })
+
+  it('releases PNG assets whose async creation finishes after cancellation', async () => {
+    const { ANIME_FACE_ASSETS, StageContent } =
+      await import('./HandFrameStage')
+    let finishLoad: ((texture: { width: number; height: number }) => void) | undefined
+    const pendingTexture = new Promise<{ width: number; height: number }>(
+      (resolve) => {
+        finishLoad = resolve
+      },
+    )
+    lifecycleMocks.loadAsset.mockReturnValue(pendingTexture)
+    const video = document.createElement('video')
+    const common = {
+      video,
+      settings: {
+        levels: 5,
+        edgeStrength: 0.65,
+        tint: 0.1,
+        mirror: true,
+      },
+      paused: false,
+    }
+    const view = render(
+      createElement(StageContent, { ...common, mode: 'png' }),
+    )
+    await waitFor(() => {
+      expect(lifecycleMocks.loadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length,
+      )
+    })
+
+    view.rerender(createElement(StageContent, { ...common, mode: 'prompt' }))
+    finishLoad?.({ width: 512, height: 512 })
+
+    await waitFor(() => {
+      expect(lifecycleMocks.unloadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length,
+      )
+    })
+    expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+    view.unmount()
+  })
+
+  it('recreates the PNG face tracker after a shared hand-tracker retry', async () => {
+    const { StageContent } = await import('./HandFrameStage')
+    const video = document.createElement('video')
+    const common = {
+      video,
+      mode: 'png' as const,
+      settings: {
+        levels: 5,
+        edgeStrength: 0.65,
+        tint: 0.1,
+        mirror: true,
+      },
+      paused: false,
+    }
+    const view = render(createElement(StageContent, common))
+    await waitFor(() => {
+      expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+      expect(lifecycleMocks.createFaceTracker).toHaveBeenCalledTimes(1)
+    })
+
+    view.rerender(createElement(StageContent, { ...common, trackerKey: 1 }))
+
+    await waitFor(() => {
+      expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(2)
+      expect(lifecycleMocks.createFaceTracker).toHaveBeenCalledTimes(2)
+    })
+    view.unmount()
   })
 })
 
