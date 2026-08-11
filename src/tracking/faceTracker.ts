@@ -28,7 +28,9 @@ export type FacePose = {
 
 export type FaceExpression = {
   /** 0..1, higher means eyes more closed. */
-  blink: number
+  blinkLeft: number
+  /** 0..1, higher means eyes more closed. */
+  blinkRight: number
   /** 0..1, higher means mouth more open. */
   jawOpen: number
 }
@@ -105,12 +107,10 @@ function scoreByName(
 export function expressionFromBlendshapes(
   categories: Array<{ categoryName?: string; score?: number }> | undefined,
 ): FaceExpression {
-  const blinkLeft = scoreByName(categories, 'eyeBlinkLeft')
-  const blinkRight = scoreByName(categories, 'eyeBlinkRight')
-  const jawOpen = scoreByName(categories, 'jawOpen')
   return {
-    blink: Math.max(blinkLeft, blinkRight),
-    jawOpen,
+    blinkLeft: scoreByName(categories, 'eyeBlinkLeft'),
+    blinkRight: scoreByName(categories, 'eyeBlinkRight'),
+    jawOpen: scoreByName(categories, 'jawOpen'),
   }
 }
 

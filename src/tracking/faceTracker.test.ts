@@ -33,14 +33,14 @@ describe('poseFromLandmarks', () => {
 })
 
 describe('expressionFromBlendshapes', () => {
-  it('reads blink and jawOpen scores', () => {
+  it('preserves left and right blink scores alongside jawOpen', () => {
     expect(
       expressionFromBlendshapes([
         { categoryName: 'eyeBlinkLeft', score: 0.2 },
         { categoryName: 'eyeBlinkRight', score: 0.8 },
         { categoryName: 'jawOpen', score: 0.55 },
       ]),
-    ).toEqual({ blink: 0.8, jawOpen: 0.55 })
+    ).toEqual({ blinkLeft: 0.2, blinkRight: 0.8, jawOpen: 0.55 })
   })
 })
 
