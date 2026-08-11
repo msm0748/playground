@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useCamera } from './camera/useCamera'
 import { HandFrameStage } from './pixi/HandFrameStage'
-import type { FilterSettings, GesturePhase } from './types'
-import { DEFAULT_FILTER_SETTINGS } from './types'
+import type { FilterMode, FilterSettings, GesturePhase } from './types'
+import { DEFAULT_FILTER_MODE, DEFAULT_FILTER_SETTINGS } from './types'
 import { Controls } from './ui/Controls'
 import { StatusOverlay } from './ui/StatusOverlay'
 
@@ -11,6 +11,7 @@ function App() {
   const [settings, setSettings] = useState<FilterSettings>(
     DEFAULT_FILTER_SETTINGS,
   )
+  const [mode, setMode] = useState<FilterMode>(DEFAULT_FILTER_MODE)
   const [paused, setPaused] = useState(
     () => document.visibilityState === 'hidden',
   )
@@ -73,7 +74,9 @@ function App() {
         />
       )}
       <Controls
+        mode={mode}
         settings={settings}
+        onModeChange={setMode}
         onChange={setSettings}
         onRestartCamera={() => void restart()}
       />

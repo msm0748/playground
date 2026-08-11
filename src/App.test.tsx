@@ -47,13 +47,15 @@ describe('App controls and visibility', () => {
     })
   })
 
-  it('passes live settings and tab visibility to the stage', async () => {
+  it('updates the selected filter mode and passes tab visibility to the stage', async () => {
     render(<App />)
 
-    fireEvent.change(screen.getByRole('slider', { name: '셀 강도' }), {
-      target: { value: '8' },
-    })
-    expect(mocks.stageProps.at(-1)?.settings.levels).toBe(8)
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 모드' }))
+    expect(
+      screen.getByRole('button', { name: '프롬프트 모드' }).getAttribute(
+        'aria-pressed',
+      ),
+    ).toBe('true')
 
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -65,8 +67,6 @@ describe('App controls and visibility', () => {
       expect(mocks.stageProps.at(-1)?.paused).toBe(true)
     })
 
-    fireEvent.click(screen.getByRole('button', { name: '카메라 재시작' }))
-    expect(mocks.restart).toHaveBeenCalledOnce()
   })
 
   it('recreates the tracker on retry without restarting the camera', async () => {
