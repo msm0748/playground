@@ -104,6 +104,38 @@ body {
   backdrop-filter: blur(14px);
 }
 
+.controls--collapsed {
+  width: auto;
+  gap: 0;
+  padding: 0.5rem;
+}
+
+.controls__header {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.controls__title {
+  font-size: 0.9rem;
+}
+
+.controls button.controls__collapse {
+  min-height: 36px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.8rem;
+}
+
+.controls__panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.controls__panel[hidden] {
+  display: none;
+}
+
 .controls__modes {
   display: grid;
   gap: 0.5rem;
