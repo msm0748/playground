@@ -72,6 +72,15 @@ export function Controls({
             <strong>프롬프트 모드</strong>
             <span>실시간 셀 애니 카메라</span>
           </button>
+          <button
+            type="button"
+            aria-label="아스키 모드"
+            aria-pressed={mode === 'ascii'}
+            onClick={() => onModeChange('ascii')}
+          >
+            <strong>아스키 모드</strong>
+            <span>문자로 그리는 아스키 아트</span>
+          </button>
         </div>
         <label className="controls__toggle">
           <input

@@ -30,6 +30,9 @@ describe('Controls', () => {
       mirror: false,
     })
 
+    fireEvent.click(screen.getByRole('button', { name: '아스키 모드' }))
+    expect(onModeChange).toHaveBeenCalledWith('ascii')
+
     fireEvent.click(screen.getByRole('button', { name: '카메라 재시작' }))
     expect(onRestartCamera).toHaveBeenCalledTimes(1)
   })

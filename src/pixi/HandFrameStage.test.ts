@@ -55,6 +55,15 @@ beforeEach(() => {
   })
   lifecycleMocks.loadAsset.mockResolvedValue({ width: 512, height: 512 })
   lifecycleMocks.unloadAsset.mockResolvedValue(undefined)
+  // jsdom has no 2D canvas, and the ASCII glyph atlas draws its ramp on one.
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+    fillStyle: '',
+    font: '',
+    textAlign: '',
+    textBaseline: '',
+    fillRect: vi.fn(),
+    fillText: vi.fn(),
+  } as never)
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
 })
@@ -71,11 +80,19 @@ describe('HandFrameStage layout', () => {
       animeAssets: true,
       faceTracking: true,
       promptFilter: false,
+      asciiFilter: false,
     })
     expect(capabilitiesForMode('prompt')).toEqual({
       animeAssets: false,
       faceTracking: false,
       promptFilter: true,
+      asciiFilter: false,
+    })
+    expect(capabilitiesForMode('ascii')).toEqual({
+      animeAssets: false,
+      faceTracking: false,
+      promptFilter: false,
+      asciiFilter: true,
     })
   })
 
@@ -102,7 +119,19 @@ describe('HandFrameStage layout', () => {
     const faceFactory = vi.fn()
 
     expect(await createFaceTrackerForMode('prompt', faceFactory)).toBeNull()
+    expect(await createFaceTrackerForMode('ascii', faceFactory)).toBeNull()
     expect(faceFactory).not.toHaveBeenCalled()
+  })
+
+  it('does not load anime assets for ascii mode', async () => {
+    const { createModeResources } = await import('./HandFrameStage')
+    const texturePool = { acquire: vi.fn() }
+
+    const resources = await createModeResources('ascii', texturePool)
+
+    expect(resources.mode).toBe('ascii')
+    expect(texturePool.acquire).not.toHaveBeenCalled()
+    resources.filter.destroy()
   })
 
   it('registers a distinct texture URL for every anime expression', async () => {

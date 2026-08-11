@@ -26,6 +26,7 @@ import type {
   Point,
   Quad,
 } from '../types'
+import { AsciiArtFilter } from './AsciiArtFilter'
 import { CellShadeFilter } from './CellShadeFilter'
 import { registerPixi } from './extendPixi'
 import { PromptCelFilter } from './PromptCelFilter'
@@ -75,6 +76,7 @@ export type ModeResources =
       releaseTextures: () => Promise<void>
     }
   | { mode: 'prompt'; filter: PromptCelFilter }
+  | { mode: 'ascii'; filter: AsciiArtFilter }
 
 type AnimeTextureLoader = (src: string) => Promise<Texture>
 type AnimeTextureUnloader = (src: string) => Promise<void>
@@ -109,10 +111,14 @@ export function capabilitiesForMode(mode: FilterMode): {
   animeAssets: boolean
   faceTracking: boolean
   promptFilter: boolean
+  asciiFilter: boolean
 } {
-  return mode === 'png'
-    ? { animeAssets: true, faceTracking: true, promptFilter: false }
-    : { animeAssets: false, faceTracking: false, promptFilter: true }
+  return {
+    animeAssets: mode === 'png',
+    faceTracking: mode === 'png',
+    promptFilter: mode === 'prompt',
+    asciiFilter: mode === 'ascii',
+  }
 }
 
 async function loadAnimeTexture(src: string): Promise<Texture> {
@@ -215,6 +221,10 @@ export async function createModeResources(
 ): Promise<ModeResources> {
   if (mode === 'prompt') {
     return { mode, filter: new PromptCelFilter() }
+  }
+
+  if (mode === 'ascii') {
+    return { mode, filter: new AsciiArtFilter() }
   }
 
   const keys = Object.keys(ANIME_FACE_ASSETS) as AnimeExpressionKey[]
@@ -767,6 +777,11 @@ export function StageContent({
   }
   const pngResources =
     activeModeResources?.mode === 'png' ? activeModeResources : null
+  /** Prompt and ASCII both repaint the whole framed area rather than the face. */
+  const fullFrameResources =
+    activeModeResources && activeModeResources.mode !== 'png'
+      ? activeModeResources
+      : null
   const animeTexture =
     pngResources?.animeTextures[expressionKey] ??
     pngResources?.animeTextures.neutral ??
@@ -863,7 +878,7 @@ export function StageContent({
           visible={faceShadingVisible && faceMask !== null}
         />
       )}
-      {activeModeResources?.mode === 'prompt' && (
+      {fullFrameResources && (
         <pixiSprite
           texture={videoTexture}
           anchor={0.5}

@@ -23,7 +23,7 @@ export type FilterSettings = {
   mirror: boolean
 }
 
-export type FilterMode = 'png' | 'prompt'
+export type FilterMode = 'png' | 'prompt' | 'ascii'
 
 export const DEFAULT_FILTER_MODE: FilterMode = 'png'
 
