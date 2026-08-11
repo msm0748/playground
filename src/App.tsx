@@ -66,6 +66,7 @@ function App() {
       {state.status === 'live' && (
         <HandFrameStage
           videoRef={videoRef}
+          mode={mode}
           settings={settings}
           paused={paused}
           trackerKey={trackerKey}

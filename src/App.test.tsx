@@ -1,8 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FilterSettings } from './types'
+import type { FilterMode, FilterSettings } from './types'
 
 type StageProps = {
+  mode: FilterMode
   settings: FilterSettings
   paused: boolean
   trackerKey?: number
@@ -12,6 +13,7 @@ type StageProps = {
 const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   stageProps: [] as Array<{
+    mode: FilterMode
     settings: FilterSettings
     paused: boolean
     trackerKey?: number
@@ -56,6 +58,8 @@ describe('App controls and visibility', () => {
         'aria-pressed',
       ),
     ).toBe('true')
+    expect(mocks.stageProps.at(-1)?.mode).toBe('prompt')
+    expect(mocks.restart).not.toHaveBeenCalled()
 
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -66,7 +70,6 @@ describe('App controls and visibility', () => {
     await waitFor(() => {
       expect(mocks.stageProps.at(-1)?.paused).toBe(true)
     })
-
   })
 
   it('recreates the tracker on retry without restarting the camera', async () => {

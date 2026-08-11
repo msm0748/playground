@@ -9,6 +9,47 @@ vi.mock('@pixi/react', () => ({
 }))
 
 describe('HandFrameStage layout', () => {
+  it('describes the resources owned by each filter mode', async () => {
+    const { capabilitiesForMode } = await import('./HandFrameStage')
+
+    expect(capabilitiesForMode('png')).toEqual({
+      animeAssets: true,
+      faceTracking: true,
+      promptFilter: false,
+    })
+    expect(capabilitiesForMode('prompt')).toEqual({
+      animeAssets: false,
+      faceTracking: false,
+      promptFilter: true,
+    })
+  })
+
+  it('caps high-density rendering at 1.5x', async () => {
+    const { capRenderingResolution } = await import('./HandFrameStage')
+
+    expect(capRenderingResolution(1)).toBe(1)
+    expect(capRenderingResolution(2)).toBe(1.5)
+  })
+
+  it('does not load anime assets for prompt mode', async () => {
+    const { createModeResources } = await import('./HandFrameStage')
+    const loadAnimeTexture = vi.fn()
+
+    const resources = await createModeResources('prompt', loadAnimeTexture)
+
+    expect(resources.mode).toBe('prompt')
+    expect(loadAnimeTexture).not.toHaveBeenCalled()
+    resources.filter.destroy()
+  })
+
+  it('does not create a face tracker for prompt mode', async () => {
+    const { createFaceTrackerForMode } = await import('./HandFrameStage')
+    const faceFactory = vi.fn()
+
+    expect(await createFaceTrackerForMode('prompt', faceFactory)).toBeNull()
+    expect(faceFactory).not.toHaveBeenCalled()
+  })
+
   it('registers a distinct texture URL for every anime expression', async () => {
     const { ANIME_FACE_ASSETS } = await import('./HandFrameStage')
 
