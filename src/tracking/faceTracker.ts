@@ -26,10 +26,28 @@ export type FacePose = {
   rotation: number
 }
 
+export type FaceExpression = {
+  /** 0..1, higher means eyes more closed. */
+  blink: number
+  /** 0..1, higher means mouth more open. */
+  jawOpen: number
+}
+
+export type FaceSample = {
+  pose: FacePose
+  expression: FaceExpression
+}
+
 export type FaceTracker = {
-  detect: (video: HTMLVideoElement, timestampMs: number) => FacePose | null
+  detect: (video: HTMLVideoElement, timestampMs: number) => FaceSample | null
   close: () => void
 }
+
+export type AnimeExpressionKey =
+  | 'neutral'
+  | 'blink'
+  | 'mouth'
+  | 'blinkMouth'
 
 function landmarkPoint(
   landmarks: Array<{ x: number; y: number }>,
@@ -75,6 +93,56 @@ export function poseFromLandmarks(
   }
 }
 
+function scoreByName(
+  categories: Array<{ categoryName?: string; score?: number }> | undefined,
+  name: string,
+): number {
+  if (!categories) return 0
+  const hit = categories.find((c) => c.categoryName === name)
+  return typeof hit?.score === 'number' ? hit.score : 0
+}
+
+export function expressionFromBlendshapes(
+  categories: Array<{ categoryName?: string; score?: number }> | undefined,
+): FaceExpression {
+  const blinkLeft = scoreByName(categories, 'eyeBlinkLeft')
+  const blinkRight = scoreByName(categories, 'eyeBlinkRight')
+  const jawOpen = scoreByName(categories, 'jawOpen')
+  return {
+    blink: Math.max(blinkLeft, blinkRight),
+    jawOpen,
+  }
+}
+
+/** Hysteresis keeps blink/mouth from flickering around the threshold. */
+export function selectAnimeExpression(
+  expression: FaceExpression,
+  previous: AnimeExpressionKey = 'neutral',
+): AnimeExpressionKey {
+  const blinkOn = previous === 'blink' || previous === 'blinkMouth' ? 0.35 : 0.5
+  const blinkOff = previous === 'blink' || previous === 'blinkMouth' ? 0.22 : 0.5
+  const mouthOn = previous === 'mouth' || previous === 'blinkMouth' ? 0.25 : 0.35
+  const mouthOff = previous === 'mouth' || previous === 'blinkMouth' ? 0.15 : 0.35
+
+  const blink =
+    expression.blink >= blinkOn
+      ? true
+      : expression.blink <= blinkOff
+        ? false
+        : previous === 'blink' || previous === 'blinkMouth'
+  const mouth =
+    expression.jawOpen >= mouthOn
+      ? true
+      : expression.jawOpen <= mouthOff
+        ? false
+        : previous === 'mouth' || previous === 'blinkMouth'
+
+  if (blink && mouth) return 'blinkMouth'
+  if (blink) return 'blink'
+  if (mouth) return 'mouth'
+  return 'neutral'
+}
+
 export async function createFaceTracker(): Promise<FaceTracker> {
   const vision = await FilesetResolver.forVisionTasks(WASM)
   const landmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -84,6 +152,7 @@ export async function createFaceTracker(): Promise<FaceTracker> {
     },
     runningMode: 'VIDEO',
     numFaces: 1,
+    outputFaceBlendshapes: true,
   })
 
   return {
@@ -92,11 +161,17 @@ export async function createFaceTracker(): Promise<FaceTracker> {
       const result = landmarker.detectForVideo(video, timestampMs)
       const landmarks = result.faceLandmarks[0]
       if (!landmarks) return null
-      return poseFromLandmarks(
+      const pose = poseFromLandmarks(
         landmarks,
         video.videoWidth,
         video.videoHeight,
       )
+      if (!pose) return null
+      const categories = result.faceBlendshapes[0]?.categories
+      return {
+        pose,
+        expression: expressionFromBlendshapes(categories),
+      }
     },
     close() {
       landmarker.close()
