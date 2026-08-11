@@ -181,6 +181,92 @@ describe('HandFrameStage layout', () => {
   })
 })
 
+describe('PNG mode face shading region', () => {
+  const frameQuad = {
+    points: [
+      { x: 0, y: 0 },
+      { x: 1000, y: 0 },
+      { x: 1000, y: 1000 },
+      { x: 0, y: 1000 },
+    ],
+  } as never
+  const identityLayout = { scale: 1, offsetX: 0, offsetY: 0 }
+
+  it('keeps the shaded region inside the tracked face box', async () => {
+    const { faceMaskPolygon, FACE_MASK_PADDING } =
+      await import('./HandFrameStage')
+
+    const polygon = faceMaskPolygon(
+      { center: { x: 500, y: 500 }, width: 200, height: 260, rotation: 0 },
+      frameQuad,
+      1280,
+      identityLayout,
+      false,
+    )
+
+    const xs = polygon.map((point) => point.x)
+    const ys = polygon.map((point) => point.y)
+    expect(Math.min(...xs)).toBeCloseTo(500 - 100 * FACE_MASK_PADDING, 5)
+    expect(Math.max(...xs)).toBeCloseTo(500 + 100 * FACE_MASK_PADDING, 5)
+    expect(Math.min(...ys)).toBeCloseTo(500 - 130 * FACE_MASK_PADDING, 5)
+    expect(Math.max(...ys)).toBeCloseTo(500 + 130 * FACE_MASK_PADDING, 5)
+  })
+
+  it('never shades outside the hand frame', async () => {
+    const { faceMaskPolygon } = await import('./HandFrameStage')
+
+    const polygon = faceMaskPolygon(
+      { center: { x: 60, y: 500 }, width: 400, height: 400, rotation: 0 },
+      frameQuad,
+      1280,
+      identityLayout,
+      false,
+    )
+
+    expect(polygon.length).toBeGreaterThan(2)
+    expect(polygon.every((point) => point.x >= -1e-6)).toBe(true)
+    expect(Math.min(...polygon.map((point) => point.x))).toBeCloseTo(0, 5)
+  })
+
+  it('drops the shading when the face sits outside the hand frame', async () => {
+    const { faceMaskPolygon } = await import('./HandFrameStage')
+
+    const polygon = faceMaskPolygon(
+      { center: { x: 5000, y: 500 }, width: 200, height: 200, rotation: 0 },
+      frameQuad,
+      1280,
+      identityLayout,
+      false,
+    )
+
+    expect(polygon).toEqual([])
+  })
+
+  it('clips a polygon against either quad winding', async () => {
+    const { clipPolygonToQuad } = await import('./HandFrameStage')
+    const wide = [
+      { x: -10, y: 2 },
+      { x: 10, y: 2 },
+      { x: 10, y: 8 },
+      { x: -10, y: 8 },
+    ]
+    const clockwise = [
+      { x: 0, y: 0 },
+      { x: 6, y: 0 },
+      { x: 6, y: 10 },
+      { x: 0, y: 10 },
+    ]
+
+    for (const points of [clockwise, [...clockwise].reverse()]) {
+      const clipped = clipPolygonToQuad(wide, { points } as never)
+      expect(Math.min(...clipped.map((point) => point.x))).toBeCloseTo(0, 5)
+      expect(Math.max(...clipped.map((point) => point.x))).toBeCloseTo(6, 5)
+      expect(Math.min(...clipped.map((point) => point.y))).toBeCloseTo(2, 5)
+      expect(Math.max(...clipped.map((point) => point.y))).toBeCloseTo(8, 5)
+    }
+  })
+})
+
 describe('anime texture lifecycle', () => {
   it('unloads an asset only after its final overlapping generation releases it', async () => {
     const { createAnimeTexturePool } = await import('./HandFrameStage')

@@ -393,6 +393,108 @@ export function animeTransformFromFace(
   }
 }
 
+/** Pads the tracked face box so the shading still covers hair and jawline edges. */
+export const FACE_MASK_PADDING = 1.1
+const FACE_MASK_SEGMENTS = 48
+
+function edgeIntersection(
+  from: Point,
+  to: Point,
+  fromSide: number,
+  toSide: number,
+): Point {
+  const t = fromSide / (fromSide - toSide)
+  return {
+    x: from.x + (to.x - from.x) * t,
+    y: from.y + (to.y - from.y) * t,
+  }
+}
+
+/**
+ * Sutherland–Hodgman clipping. The frame quad is convex, so clipping the polygon
+ * against each of its edges in turn yields the intersection of the two shapes.
+ */
+export function clipPolygonToQuad(polygon: Point[], quad: Quad): Point[] {
+  const corners = quad.points
+  const signedArea =
+    corners.reduce((sum, point, index) => {
+      const next = corners[(index + 1) % corners.length]
+      return sum + (point.x * next.y - next.x * point.y)
+    }, 0) / 2
+  if (signedArea === 0) return []
+  // Walk the quad in a fixed winding so its interior is always left of every edge.
+  const ordered = signedArea > 0 ? [...corners] : [...corners].reverse()
+
+  let output = polygon
+  for (let index = 0; index < ordered.length && output.length > 0; index++) {
+    const edgeStart = ordered[index]
+    const edgeEnd = ordered[(index + 1) % ordered.length]
+    const sideOf = (point: Point) =>
+      (edgeEnd.x - edgeStart.x) * (point.y - edgeStart.y) -
+      (edgeEnd.y - edgeStart.y) * (point.x - edgeStart.x)
+
+    const input = output
+    output = []
+    for (let i = 0; i < input.length; i++) {
+      const current = input[i]
+      const previous = input[(i + input.length - 1) % input.length]
+      const currentSide = sideOf(current)
+      const previousSide = sideOf(previous)
+
+      if (currentSide >= 0) {
+        if (previousSide < 0) {
+          output.push(
+            edgeIntersection(previous, current, previousSide, currentSide),
+          )
+        }
+        output.push(current)
+      } else if (previousSide >= 0) {
+        output.push(
+          edgeIntersection(previous, current, previousSide, currentSide),
+        )
+      }
+    }
+  }
+
+  return output
+}
+
+/**
+ * Stage-space outline of the tracked face, clipped to the hand frame. PNG mode
+ * shades only this region so the rest of the framed scene stays untouched.
+ */
+export function faceMaskPolygon(
+  face: FacePose,
+  quad: Quad,
+  videoWidth: number,
+  layout: CoverLayout,
+  mirror: boolean,
+  segments: number = FACE_MASK_SEGMENTS,
+): Point[] {
+  const center = mapPointToStage(face.center, videoWidth, layout, mirror)
+  const radiusX = face.width * 0.5 * FACE_MASK_PADDING * layout.scale
+  const radiusY = face.height * 0.5 * FACE_MASK_PADDING * layout.scale
+  const rotation = mirror ? -face.rotation : face.rotation
+  const cos = Math.cos(rotation)
+  const sin = Math.sin(rotation)
+
+  const ellipse: Point[] = []
+  for (let index = 0; index < segments; index++) {
+    const angle = (index / segments) * Math.PI * 2
+    const localX = Math.cos(angle) * radiusX
+    const localY = Math.sin(angle) * radiusY
+    ellipse.push({
+      x: center.x + localX * cos - localY * sin,
+      y: center.y + localX * sin + localY * cos,
+    })
+  }
+
+  return clipPolygonToQuad(
+    ellipse,
+    mapQuadToStage(quad, videoWidth, layout, mirror),
+  )
+}
+
 export function animeTransformFromQuad(
   quad: Quad,
   animeTexture: Texture,
@@ -444,6 +546,7 @@ export function StageContent({
   const [expressionKey, setExpressionKey] =
     useState<AnimeExpressionKey>('neutral')
   const [mask, setMask] = useState<Graphics | null>(null)
+  const [faceMask, setFaceMask] = useState<Graphics | null>(null)
   const [videoTexture, setVideoTexture] = useState<Texture | null>(null)
   const [modeResources, setModeResources] = useState<ModeResources | null>(null)
   const settingsRef = useRef(settings)
@@ -688,6 +791,19 @@ export function StageContent({
           )
       : null
 
+  const facePolygon =
+    pngResources && facePose && gesture.quad && videoWidth > 0
+      ? faceMaskPolygon(
+          facePose,
+          gesture.quad,
+          videoWidth,
+          layout,
+          settings.mirror,
+        )
+      : []
+  /** PNG mode only shades the face, so without one there is nothing to shade. */
+  const faceShadingVisible = gesture.phase !== 'idle' && facePolygon.length >= 3
+
   const drawMask = useCallback(
     (graphics: Graphics) => {
       graphics.clear()
@@ -698,6 +814,17 @@ export function StageContent({
         .fill({ color: 0xffffff })
     },
     [displayQuad],
+  )
+
+  const drawFaceMask = useCallback(
+    (graphics: Graphics) => {
+      graphics.clear()
+      if (facePolygon.length < 3) return
+      graphics
+        .poly(facePolygon.flatMap((point) => [point.x, point.y]))
+        .fill({ color: 0xffffff })
+    },
+    [facePolygon],
   )
 
   if (!screen || !videoTexture) return null
@@ -717,6 +844,13 @@ export function StageContent({
         visible={gesture.phase !== 'idle'}
       />
       {pngResources && (
+        <pixiGraphics
+          ref={setFaceMask}
+          draw={drawFaceMask}
+          visible={faceShadingVisible}
+        />
+      )}
+      {pngResources && (
         <pixiSprite
           texture={videoTexture}
           anchor={0.5}
@@ -724,9 +858,9 @@ export function StageContent({
           y={stageHeight / 2}
           scale={spriteScale}
           filters={filters}
-          mask={mask}
+          mask={faceMask}
           alpha={gesture.alpha * 0.35}
-          visible={gesture.phase !== 'idle'}
+          visible={faceShadingVisible && faceMask !== null}
         />
       )}
       {activeModeResources?.mode === 'prompt' && (
