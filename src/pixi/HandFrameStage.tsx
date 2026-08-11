@@ -1,5 +1,6 @@
 import { Application, useApplication } from '@pixi/react'
 import {
+  Assets,
   Graphics,
   Texture,
   VideoSource,
@@ -12,8 +13,9 @@ import {
   useState,
   type RefObject,
 } from 'react'
-import { createHandTracker, type HandTracker } from '../tracking/handTracker'
+import { createFaceTracker, type FacePose, type FaceTracker } from '../tracking/faceTracker'
 import { createFrameGesture } from '../tracking/frameGesture'
+import { createHandTracker, type HandTracker } from '../tracking/handTracker'
 import type {
   FilterSettings,
   GesturePhase,
@@ -25,6 +27,8 @@ import { CellShadeFilter } from './CellShadeFilter'
 import { registerPixi } from './extendPixi'
 
 registerPixi()
+
+const ANIME_FACE_URL = '/anime-face-overlay.png?v=2'
 
 type CoverLayout = {
   scale: number
@@ -49,6 +53,14 @@ type StageContentProps = Omit<HandFrameStageProps, 'videoRef'> & {
 type StageResources = {
   texture: Texture
   filter: CellShadeFilter
+  animeTexture: Texture
+}
+
+type AnimeTransform = {
+  x: number
+  y: number
+  scale: number
+  rotation: number
 }
 
 const IDLE_GESTURE: GestureResult = {
@@ -147,6 +159,52 @@ export function mapQuadToStage(
   }
 }
 
+export function animeTransformFromFace(
+  face: FacePose,
+  animeTexture: Texture,
+  videoWidth: number,
+  layout: CoverLayout,
+  mirror: boolean,
+): AnimeTransform {
+  const center = mapPointToStage(face.center, videoWidth, layout, mirror)
+  const targetWidth = face.width * layout.scale * 1.35
+  const scale = targetWidth / Math.max(animeTexture.width, 1)
+  return {
+    x: center.x,
+    y: center.y,
+    scale,
+    rotation: mirror ? -face.rotation : face.rotation,
+  }
+}
+
+export function animeTransformFromQuad(
+  quad: Quad,
+  animeTexture: Texture,
+  videoWidth: number,
+  layout: CoverLayout,
+  mirror: boolean,
+): AnimeTransform {
+  const display = mapQuadToStage(quad, videoWidth, layout, mirror)
+  const xs = display.points.map((p) => p.x)
+  const ys = display.points.map((p) => p.y)
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const width = Math.max(maxX - minX, 1)
+  const height = Math.max(maxY - minY, 1)
+  const scale = Math.min(
+    (width * 1.05) / Math.max(animeTexture.width, 1),
+    (height * 1.2) / Math.max(animeTexture.height, 1),
+  )
+  return {
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
+    scale,
+    rotation: 0,
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
@@ -163,6 +221,7 @@ function StageContent({
 }: StageContentProps) {
   const { app } = useApplication()
   const [gesture, setGesture] = useState<GestureResult>(IDLE_GESTURE)
+  const [facePose, setFacePose] = useState<FacePose | null>(null)
   const [mask, setMask] = useState<Graphics | null>(null)
   const [resources, setResources] = useState<StageResources | null>(null)
   const settingsRef = useRef(settings)
@@ -180,17 +239,35 @@ function StageContent({
   errorCallbackRef.current = onTrackerError
 
   useEffect(() => {
-    const created: StageResources = {
-      texture: createVideoTexture(video),
-      filter: new CellShadeFilter(),
-    }
-    setResources(created)
+    let cancelled = false
+    let created: StageResources | null = null
+
+    void Assets.load({
+      alias: ANIME_FACE_URL,
+      src: ANIME_FACE_URL,
+      data: { alphaMode: 'premultiply-alpha-on-upload' },
+    })
+      .then((animeTexture: Texture) => {
+        if (cancelled) return
+        created = {
+          texture: createVideoTexture(video),
+          filter: new CellShadeFilter(),
+          animeTexture,
+        }
+        setResources(created)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          errorCallbackRef.current?.(errorMessage(error))
+        }
+      })
 
     return () => {
-      // Deliberately no state reset here: on unmount the Pixi application is already
-      // being destroyed, and re-rendering against it would read a torn-down renderer.
-      created.filter.destroy()
-      releaseVideoTexture(created.texture)
+      cancelled = true
+      if (created) {
+        created.filter.destroy()
+        releaseVideoTexture(created.texture)
+      }
     }
   }, [video])
 
@@ -200,13 +277,14 @@ function StageContent({
     const { texture, filter } = resources
     let cancelled = false
     let animationFrameId: number | null = null
-    let tracker: HandTracker | null = null
+    let handTracker: HandTracker | null = null
+    let faceTracker: FaceTracker | null = null
     let lastPhase: GesturePhase = 'idle'
     const frameGesture = createFrameGesture()
     const failureGuard = createDetectFailureGuard()
 
     const runFrame = (nowMs: number) => {
-      if (cancelled || !tracker) return
+      if (cancelled || !handTracker) return
 
       if (
         !pausedRef.current &&
@@ -216,17 +294,24 @@ function StageContent({
       ) {
         try {
           texture.source.update()
-          const hands = tracker.detect(video, nowMs)
+          const hands = handTracker.detect(video, nowMs)
           const nextGesture = frameGesture.update(
             hands,
             { width: video.videoWidth, height: video.videoHeight },
             nowMs,
           )
+          const nextFace =
+            nextGesture.phase === 'idle'
+              ? null
+              : (faceTracker?.detect(video, nowMs) ?? null)
+
           const currentSettings = settingsRef.current
           filter.levels = currentSettings.levels
           filter.edgeStrength = currentSettings.edgeStrength
           filter.tint = currentSettings.tint
+
           setGesture(nextGesture)
+          setFacePose(nextFace)
           failureGuard.recordSuccess()
 
           if (nextGesture.phase !== lastPhase) {
@@ -238,8 +323,11 @@ function StageContent({
             errorCallbackRef.current?.(errorMessage(error))
             frameGesture.reset()
             setGesture(IDLE_GESTURE)
-            tracker.close()
-            tracker = null
+            setFacePose(null)
+            handTracker.close()
+            handTracker = null
+            faceTracker?.close()
+            faceTracker = null
             return
           }
         }
@@ -248,14 +336,16 @@ function StageContent({
       animationFrameId = requestAnimationFrame(runFrame)
     }
 
-    void createHandTracker()
-      .then((createdTracker) => {
+    void Promise.all([createHandTracker(), createFaceTracker()])
+      .then(([createdHandTracker, createdFaceTracker]) => {
         if (cancelled) {
-          createdTracker.close()
+          createdHandTracker.close()
+          createdFaceTracker.close()
           return
         }
 
-        tracker = createdTracker
+        handTracker = createdHandTracker
+        faceTracker = createdFaceTracker
         phaseCallbackRef.current?.('idle')
         animationFrameId = requestAnimationFrame(runFrame)
       })
@@ -270,15 +360,14 @@ function StageContent({
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId)
       }
-      tracker?.close()
+      handTracker?.close()
+      faceTracker?.close()
       frameGesture.reset()
     }
   }, [resources, trackerKey, video])
 
   const videoWidth = video.videoWidth
   const videoHeight = video.videoHeight
-  // A StrictMode remount destroys and recreates the Pixi application, so this render can
-  // still receive the torn-down instance whose `screen` getter would throw.
   const screen = app.renderer ? app.screen : null
   const stageWidth = screen?.width ?? 0
   const stageHeight = screen?.height ?? 0
@@ -296,6 +385,24 @@ function StageContent({
     x: layout.scale * (settings.mirror ? -1 : 1),
     y: layout.scale,
   }
+  const animeTransform =
+    resources && gesture.quad && videoWidth > 0
+      ? facePose
+        ? animeTransformFromFace(
+            facePose,
+            resources.animeTexture,
+            videoWidth,
+            layout,
+            settings.mirror,
+          )
+        : animeTransformFromQuad(
+            gesture.quad,
+            resources.animeTexture,
+            videoWidth,
+            layout,
+            settings.mirror,
+          )
+      : null
 
   const drawMask = useCallback(
     (graphics: Graphics) => {
@@ -333,9 +440,25 @@ function StageContent({
         scale={spriteScale}
         filters={filters}
         mask={mask}
-        alpha={gesture.alpha}
+        alpha={gesture.alpha * 0.35}
         visible={gesture.phase !== 'idle'}
       />
+      {animeTransform && (
+        <pixiSprite
+          texture={resources.animeTexture}
+          anchor={0.5}
+          x={animeTransform.x}
+          y={animeTransform.y}
+          scale={{
+            x: animeTransform.scale * (settings.mirror ? -1 : 1),
+            y: animeTransform.scale,
+          }}
+          rotation={animeTransform.rotation}
+          mask={mask}
+          alpha={gesture.alpha}
+          visible={gesture.phase !== 'idle'}
+        />
+      )}
     </>
   )
 }

@@ -45,6 +45,29 @@ describe('HandFrameStage layout', () => {
       ],
     })
   })
+
+  it('scales the anime overlay to the tracked face width', async () => {
+    const { animeTransformFromFace } = await import('./HandFrameStage')
+    const texture = { width: 512, height: 512 } as never
+
+    const transform = animeTransformFromFace(
+      {
+        center: { x: 640, y: 360 },
+        width: 200,
+        height: 240,
+        rotation: 0.1,
+      },
+      texture,
+      1280,
+      { scale: 1, offsetX: 0, offsetY: 0 },
+      false,
+    )
+
+    expect(transform.x).toBe(640)
+    expect(transform.y).toBe(360)
+    expect(transform.scale).toBeCloseTo((200 * 1.35) / 512, 5)
+    expect(transform.rotation).toBeCloseTo(0.1, 5)
+  })
 })
 
 describe('detect failure guard', () => {
