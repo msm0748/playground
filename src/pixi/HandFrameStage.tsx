@@ -2,6 +2,7 @@ import { Application, useApplication } from '@pixi/react'
 import {
   Graphics,
   Texture,
+  VideoSource,
 } from 'pixi.js'
 import {
   useCallback,
@@ -34,6 +35,8 @@ type HandFrameStageProps = {
   videoRef: RefObject<HTMLVideoElement | null>
   settings: FilterSettings
   paused: boolean
+  /** Bumping this recreates the hand tracker without restarting the camera. */
+  trackerKey?: number
   onPhaseChange?: (phase: GesturePhase) => void
   onTrackerError?: (message: string) => void
 }
@@ -42,10 +45,53 @@ type StageContentProps = Omit<HandFrameStageProps, 'videoRef'> & {
   video: HTMLVideoElement
 }
 
+type StageResources = {
+  texture: Texture
+  filter: CellShadeFilter
+}
+
 const IDLE_GESTURE: GestureResult = {
   phase: 'idle',
   rect: null,
   alpha: 0,
+}
+
+/** Detection hiccups are common while the GPU delegate warms up, so tolerate a few. */
+export const MAX_CONSECUTIVE_DETECT_FAILURES = 5
+
+export function createDetectFailureGuard(
+  limit: number = MAX_CONSECUTIVE_DETECT_FAILURES,
+) {
+  let consecutive = 0
+
+  return {
+    /** Returns true once the failures should be surfaced and tracking stopped. */
+    recordFailure(): boolean {
+      consecutive += 1
+      return consecutive >= limit
+    },
+    recordSuccess(): void {
+      consecutive = 0
+    },
+  }
+}
+
+/**
+ * The `<video>` element is owned by `useCamera`, so the texture only borrows it:
+ * frames are uploaded manually from the tracking loop and the source is never destroyed.
+ */
+function createVideoTexture(video: HTMLVideoElement): Texture {
+  const source = new VideoSource({ resource: video, autoPlay: false })
+  source.autoUpdate = false
+  return new Texture({ source })
+}
+
+function releaseVideoTexture(texture: Texture): void {
+  const source = texture.source
+  if (source instanceof VideoSource) {
+    source.autoUpdate = false
+  }
+  texture.destroy(false)
 }
 
 export function getCoverLayout(
@@ -99,19 +145,22 @@ function StageContent({
   video,
   settings,
   paused,
+  trackerKey = 0,
   onPhaseChange,
   onTrackerError,
 }: StageContentProps) {
   const { app } = useApplication()
   const [gesture, setGesture] = useState<GestureResult>(IDLE_GESTURE)
   const [mask, setMask] = useState<Graphics | null>(null)
+  const [resources, setResources] = useState<StageResources | null>(null)
   const settingsRef = useRef(settings)
   const pausedRef = useRef(paused)
   const phaseCallbackRef = useRef(onPhaseChange)
   const errorCallbackRef = useRef(onTrackerError)
-  const texture = useMemo(() => Texture.from(video, true), [video])
-  const filter = useMemo(() => new CellShadeFilter(), [])
-  const filters = useMemo(() => [filter], [filter])
+  const filters = useMemo(
+    () => (resources ? [resources.filter] : []),
+    [resources],
+  )
 
   settingsRef.current = settings
   pausedRef.current = paused
@@ -119,18 +168,30 @@ function StageContent({
   errorCallbackRef.current = onTrackerError
 
   useEffect(() => {
-    return () => {
-      texture.destroy(true)
-      filter.destroy()
+    const created: StageResources = {
+      texture: createVideoTexture(video),
+      filter: new CellShadeFilter(),
     }
-  }, [filter, texture])
+    setResources(created)
+
+    return () => {
+      // Deliberately no state reset here: on unmount the Pixi application is already
+      // being destroyed, and re-rendering against it would read a torn-down renderer.
+      created.filter.destroy()
+      releaseVideoTexture(created.texture)
+    }
+  }, [video])
 
   useEffect(() => {
+    if (!resources) return
+
+    const { texture, filter } = resources
     let cancelled = false
     let animationFrameId: number | null = null
     let tracker: HandTracker | null = null
     let lastPhase: GesturePhase = 'idle'
     const frameGesture = createFrameGesture()
+    const failureGuard = createDetectFailureGuard()
 
     const runFrame = (nowMs: number) => {
       if (cancelled || !tracker) return
@@ -153,20 +214,22 @@ function StageContent({
           filter.levels = currentSettings.levels
           filter.edgeStrength = currentSettings.edgeStrength
           filter.tint = currentSettings.tint
-          filter.setTexel(video.videoWidth, video.videoHeight)
           setGesture(nextGesture)
+          failureGuard.recordSuccess()
 
           if (nextGesture.phase !== lastPhase) {
             lastPhase = nextGesture.phase
             phaseCallbackRef.current?.(nextGesture.phase)
           }
         } catch (error) {
-          errorCallbackRef.current?.(errorMessage(error))
-          frameGesture.reset()
-          setGesture(IDLE_GESTURE)
-          tracker.close()
-          tracker = null
-          return
+          if (failureGuard.recordFailure()) {
+            errorCallbackRef.current?.(errorMessage(error))
+            frameGesture.reset()
+            setGesture(IDLE_GESTURE)
+            tracker.close()
+            tracker = null
+            return
+          }
         }
       }
 
@@ -198,12 +261,15 @@ function StageContent({
       tracker?.close()
       frameGesture.reset()
     }
-  }, [filter, texture, video])
+  }, [resources, trackerKey, video])
 
   const videoWidth = video.videoWidth
   const videoHeight = video.videoHeight
-  const stageWidth = app.screen.width
-  const stageHeight = app.screen.height
+  // A StrictMode remount destroys and recreates the Pixi application, so this render can
+  // still receive the torn-down instance whose `screen` getter would throw.
+  const screen = app.renderer ? app.screen : null
+  const stageWidth = screen?.width ?? 0
+  const stageHeight = screen?.height ?? 0
   const layout = getCoverLayout(
     videoWidth,
     videoHeight,
@@ -251,10 +317,12 @@ function StageContent({
     [displayRect],
   )
 
+  if (!screen || !resources) return null
+
   return (
     <>
       <pixiSprite
-        texture={texture}
+        texture={resources.texture}
         anchor={0.5}
         x={stageWidth / 2}
         y={stageHeight / 2}
@@ -266,7 +334,7 @@ function StageContent({
         visible={gesture.phase !== 'idle'}
       />
       <pixiSprite
-        texture={texture}
+        texture={resources.texture}
         anchor={0.5}
         x={stageWidth / 2}
         y={stageHeight / 2}
@@ -289,6 +357,7 @@ export function HandFrameStage({
   videoRef,
   settings,
   paused,
+  trackerKey,
   onPhaseChange,
   onTrackerError,
 }: HandFrameStageProps) {
@@ -309,6 +378,7 @@ export function HandFrameStage({
             video={video}
             settings={settings}
             paused={paused}
+            trackerKey={trackerKey}
             onPhaseChange={onPhaseChange}
             onTrackerError={onTrackerError}
           />

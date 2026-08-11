@@ -12,26 +12,30 @@ describe('CellShadeFilter', () => {
     filter.levels = 7
     filter.edgeStrength = 0.8
     filter.tint = -0.2
-    filter.setTexel(640, 360)
 
     const uniforms = filter.resources.cellShadeUniforms.uniforms
     expect(uniforms.uLevels).toBe(7)
     expect(uniforms.uEdgeStrength).toBe(0.8)
     expect(uniforms.uTint).toBe(-0.2)
-    expect(Array.from(uniforms.uTexel as ArrayLike<number>)).toEqual([
-      1 / 640,
-      1 / 360,
-    ])
   })
 
-  it('keeps texel values finite for zero dimensions', async () => {
+  it('renders through the default filter vertex shader at the render target resolution', async () => {
+    const { defaultFilterVert } = await import('pixi.js')
     const { CellShadeFilter } = await import('./CellShadeFilter')
     const filter = new CellShadeFilter()
 
-    filter.setTexel(0, 0)
+    expect(filter.resolution).toBe('inherit')
+    expect(filter.glProgram.vertex).toContain('filterVertexPosition')
+    expect(filter.glProgram.vertex).toContain('uOutputFrame')
+    expect(defaultFilterVert).toContain('filterTextureCoord')
+  })
 
-    const uniforms = filter.resources.cellShadeUniforms.uniforms
-    expect(Array.from(uniforms.uTexel as ArrayLike<number>)).toEqual([1, 1])
+  it('derives its sobel step from the filter input size instead of the video size', async () => {
+    const { CellShadeFilter } = await import('./CellShadeFilter')
+    const filter = new CellShadeFilter()
+
+    expect(filter.glProgram.fragment).toContain('vec2 texel = uInputSize.zw')
+    expect(filter.glProgram.fragment).toContain('uInputClamp')
   })
 })
 

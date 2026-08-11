@@ -37,3 +37,36 @@ describe('HandFrameStage layout', () => {
     })
   })
 })
+
+describe('detect failure guard', () => {
+  it('tolerates transient failures until the limit is reached', async () => {
+    const { createDetectFailureGuard } = await import('./HandFrameStage')
+    const guard = createDetectFailureGuard(3)
+
+    expect(guard.recordFailure()).toBe(false)
+    expect(guard.recordFailure()).toBe(false)
+    expect(guard.recordFailure()).toBe(true)
+  })
+
+  it('forgets earlier failures once a frame succeeds', async () => {
+    const { createDetectFailureGuard } = await import('./HandFrameStage')
+    const guard = createDetectFailureGuard(2)
+
+    expect(guard.recordFailure()).toBe(false)
+    guard.recordSuccess()
+    expect(guard.recordFailure()).toBe(false)
+    expect(guard.recordFailure()).toBe(true)
+  })
+
+  it('defaults to tolerating several consecutive failures', async () => {
+    const { MAX_CONSECUTIVE_DETECT_FAILURES, createDetectFailureGuard } =
+      await import('./HandFrameStage')
+    const guard = createDetectFailureGuard()
+
+    expect(MAX_CONSECUTIVE_DETECT_FAILURES).toBeGreaterThan(1)
+    for (let i = 1; i < MAX_CONSECUTIVE_DETECT_FAILURES; i++) {
+      expect(guard.recordFailure()).toBe(false)
+    }
+    expect(guard.recordFailure()).toBe(true)
+  })
+})
