@@ -34,6 +34,9 @@ export function useCamera() {
       await video.play()
       setState({ status: 'live', errorMessage: null })
     } catch (e) {
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      streamRef.current = null
+      if (videoRef.current) videoRef.current.srcObject = null
       const message =
         e instanceof Error ? e.message : '카메라를 사용할 수 없습니다'
       setState({ status: 'error', errorMessage: message })

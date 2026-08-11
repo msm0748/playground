@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useCamera } from './camera/useCamera'
 import { HandFrameStage } from './pixi/HandFrameStage'
-import type { GesturePhase } from './types'
+import type { FilterSettings, GesturePhase } from './types'
 import { DEFAULT_FILTER_SETTINGS } from './types'
+import { Controls } from './ui/Controls'
 import { StatusOverlay } from './ui/StatusOverlay'
 
 function App() {
   const { videoRef, state, start, restart } = useCamera()
+  const [settings, setSettings] = useState<FilterSettings>(
+    DEFAULT_FILTER_SETTINGS,
+  )
+  const [paused, setPaused] = useState(
+    () => document.visibilityState === 'hidden',
+  )
   const [trackerError, setTrackerError] = useState<string | null>(null)
   const [trackerLoading, setTrackerLoading] = useState(false)
   const [gesturePhase, setGesturePhase] = useState<GesturePhase>('idle')
@@ -16,6 +23,17 @@ function App() {
     setGesturePhase('idle')
     setTrackerLoading(state.status === 'live')
   }, [state.status])
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setPaused(document.visibilityState === 'hidden')
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   const handlePhaseChange = useCallback((phase: GesturePhase) => {
     setTrackerLoading(false)
@@ -39,12 +57,17 @@ function App() {
       {state.status === 'live' && (
         <HandFrameStage
           videoRef={videoRef}
-          settings={DEFAULT_FILTER_SETTINGS}
-          paused={false}
+          settings={settings}
+          paused={paused}
           onPhaseChange={handlePhaseChange}
           onTrackerError={handleTrackerError}
         />
       )}
+      <Controls
+        settings={settings}
+        onChange={setSettings}
+        onRestartCamera={() => void restart()}
+      />
       <StatusOverlay
         cameraStatus={state.status}
         cameraError={state.errorMessage}
