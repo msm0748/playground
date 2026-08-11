@@ -46,15 +46,31 @@ describe('expressionFromBlendshapes', () => {
 
 describe('selectAnimeExpression', () => {
   it('picks blink and mouth variants with hysteresis', () => {
-    expect(selectAnimeExpression({ blink: 0.6, jawOpen: 0.1 })).toBe('blink')
-    expect(selectAnimeExpression({ blink: 0.4, jawOpen: 0.1 }, 'blink')).toBe(
+    expect(
+      selectAnimeExpression({ blinkLeft: 0.6, blinkRight: 0, jawOpen: 0.1 }),
+    ).toBe('blink')
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.4, blinkRight: 0, jawOpen: 0.1 },
+        'blink',
+      ),
+    ).toBe(
       'blink',
     )
-    expect(selectAnimeExpression({ blink: 0.1, jawOpen: 0.1 }, 'blink')).toBe(
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.1, blinkRight: 0, jawOpen: 0.1 },
+        'blink',
+      ),
+    ).toBe(
       'neutral',
     )
-    expect(selectAnimeExpression({ blink: 0.1, jawOpen: 0.5 })).toBe('mouth')
-    expect(selectAnimeExpression({ blink: 0.7, jawOpen: 0.6 })).toBe(
+    expect(
+      selectAnimeExpression({ blinkLeft: 0.1, blinkRight: 0, jawOpen: 0.5 }),
+    ).toBe('mouth')
+    expect(
+      selectAnimeExpression({ blinkLeft: 0.7, blinkRight: 0, jawOpen: 0.6 }),
+    ).toBe(
       'blinkMouth',
     )
   })

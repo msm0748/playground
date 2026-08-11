@@ -123,11 +123,12 @@ export function selectAnimeExpression(
   const blinkOff = previous === 'blink' || previous === 'blinkMouth' ? 0.22 : 0.5
   const mouthOn = previous === 'mouth' || previous === 'blinkMouth' ? 0.25 : 0.35
   const mouthOff = previous === 'mouth' || previous === 'blinkMouth' ? 0.15 : 0.35
+  const blinkScore = Math.max(expression.blinkLeft, expression.blinkRight)
 
   const blink =
-    expression.blink >= blinkOn
+    blinkScore >= blinkOn
       ? true
-      : expression.blink <= blinkOff
+      : blinkScore <= blinkOff
         ? false
         : previous === 'blink' || previous === 'blinkMouth'
   const mouth =
