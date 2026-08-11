@@ -48,7 +48,7 @@ describe('createHandTracker', () => {
     expect(detectForVideo).not.toHaveBeenCalled()
   })
 
-  it('maps recognized handedness and landmarks into hand samples', async () => {
+  it('keeps all hands and maps landmarks, falling Unknown back to Left', async () => {
     detectForVideo.mockReturnValue({
       landmarks: [
         [{ x: 0.1, y: 0.2, z: 0.3 }],
@@ -69,6 +69,10 @@ describe('createHandTracker', () => {
       {
         handedness: 'Left',
         landmarks: [{ x: 0.1, y: 0.2, z: 0.3 }],
+      },
+      {
+        handedness: 'Left',
+        landmarks: [{ x: 0.4, y: 0.5, z: 0.6 }],
       },
       {
         handedness: 'Right',

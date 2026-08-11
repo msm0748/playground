@@ -1,5 +1,5 @@
 import type { GestureResult, Point, Quad } from '../types'
-import { INDEX_TIP, THUMB_TIP } from './landmarks'
+import { INDEX_TIP, THUMB_TIP, WRIST } from './landmarks'
 
 export type LandmarkPoint = { x: number; y: number; z?: number }
 export type HandSample = {
@@ -40,6 +40,27 @@ function hasThumbAndIndexTips(hand: HandSample): boolean {
   )
 }
 
+function handCenterX(hand: HandSample): number {
+  const lm = hand.landmarks
+  const wrist = lm[WRIST]
+  const index = lm[INDEX_TIP]
+  const thumb = lm[THUMB_TIP]
+  return (wrist.x + index.x + thumb.x) / 3
+}
+
+/**
+ * MediaPipe Left/Right labels flip often when hands are close.
+ * Pair by image X instead: leftmost hand + rightmost hand.
+ */
+function pairHandsByPosition(
+  hands: HandSample[],
+): [HandSample, HandSample] | null {
+  const usable = hands.filter(hasThumbAndIndexTips)
+  if (usable.length < 2) return null
+  const sorted = [...usable].sort((a, b) => handCenterX(a) - handCenterX(b))
+  return [sorted[0], sorted[sorted.length - 1]]
+}
+
 function tipPoint(
   hand: HandSample,
   tip: number,
@@ -50,20 +71,33 @@ function tipPoint(
   return { x: p.x * width, y: p.y * height }
 }
 
-/** Order: left-index → right-index → right-thumb → left-thumb (non-axis-aligned). */
+/**
+ * For each hand, treat the higher tip as the top corner and the lower as bottom
+ * so pinching / swapped tip order still builds a sensible quad.
+ */
+function orderedTips(
+  hand: HandSample,
+  width: number,
+  height: number,
+): { top: Point; bottom: Point } {
+  const index = tipPoint(hand, INDEX_TIP, width, height)
+  const thumb = tipPoint(hand, THUMB_TIP, width, height)
+  return index.y <= thumb.y
+    ? { top: index, bottom: thumb }
+    : { top: thumb, bottom: index }
+}
+
+/** Order: left-top → right-top → right-bottom → left-bottom. */
 function tipsQuad(
-  left: HandSample,
-  right: HandSample,
+  leftHand: HandSample,
+  rightHand: HandSample,
   width: number,
   height: number,
 ): Quad {
+  const left = orderedTips(leftHand, width, height)
+  const right = orderedTips(rightHand, width, height)
   return {
-    points: [
-      tipPoint(left, INDEX_TIP, width, height),
-      tipPoint(right, INDEX_TIP, width, height),
-      tipPoint(right, THUMB_TIP, width, height),
-      tipPoint(left, THUMB_TIP, width, height),
-    ],
+    points: [left.top, right.top, right.bottom, left.bottom],
   }
 }
 
@@ -72,7 +106,6 @@ function quadBounds(quad: Quad): { width: number; height: number; area: number }
   const ys = quad.points.map((p) => p.y)
   const width = Math.max(...xs) - Math.min(...xs)
   const height = Math.max(...ys) - Math.min(...ys)
-  // Shoelace area (absolute)
   let area = 0
   for (let i = 0; i < 4; i++) {
     const a = quad.points[i]
@@ -82,14 +115,16 @@ function quadBounds(quad: Quad): { width: number; height: number; area: number }
   return { width, height, area: Math.abs(area) / 2 }
 }
 
-function isValidQuad(quad: Quad, videoW: number, videoH: number): boolean {
+function isValidQuad(
+  quad: Quad,
+  videoW: number,
+  videoH: number,
+  minSideRatio: number,
+): boolean {
   const { width, height, area } = quadBounds(quad)
-  const minSide = Math.min(videoW, videoH) * 0.03
+  const minSide = Math.min(videoW, videoH) * minSideRatio
   if (width < minSide || height < minSide) return false
-  const minArea = minSide * minSide
-  if (area < minArea) return false
-  const aspect = width / Math.max(height, 1e-6)
-  return aspect >= 1 / 4 && aspect <= 4
+  return area >= minSide * minSide
 }
 
 export function createFrameGesture(options?: {
@@ -98,6 +133,9 @@ export function createFrameGesture(options?: {
 }) {
   const fadeMs = options?.fadeMs ?? 250
   const lerpAlpha = options?.lerpAlpha ?? 0.35
+  // Soft enter; even softer keep so closing hands doesn't drop tracking
+  const enterMinSideRatio = 0.015
+  const keepMinSideRatio = 0.008
 
   let phase: GestureResult['phase'] = 'idle'
   let smoothed: Quad | null = null
@@ -118,13 +156,15 @@ export function createFrameGesture(options?: {
     videoSize: { width: number; height: number },
     nowMs: number,
   ): GestureResult {
-    const left = hands.find((h) => h.handedness === 'Left')
-    const right = hands.find((h) => h.handedness === 'Right')
-    const raw =
-      left && right && hasThumbAndIndexTips(left) && hasThumbAndIndexTips(right)
-        ? tipsQuad(left, right, videoSize.width, videoSize.height)
-        : null
-    const framing = !!raw && isValidQuad(raw, videoSize.width, videoSize.height)
+    const paired = pairHandsByPosition(hands)
+    const keeping = phase === 'active' || phase === 'fading'
+    const minSideRatio = keeping ? keepMinSideRatio : enterMinSideRatio
+    const raw = paired
+      ? tipsQuad(paired[0], paired[1], videoSize.width, videoSize.height)
+      : null
+    const framing =
+      !!raw &&
+      isValidQuad(raw, videoSize.width, videoSize.height, minSideRatio)
 
     if (framing && raw) {
       if (!smoothed) smoothed = cloneQuad(raw)

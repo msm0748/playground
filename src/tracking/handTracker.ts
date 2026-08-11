@@ -31,10 +31,11 @@ export async function createHandTracker(): Promise<HandTracker> {
       const result = landmarker.detectForVideo(video, timestampMs)
       const samples: HandSample[] = []
       for (let i = 0; i < result.landmarks.length; i++) {
+        // Keep Unknown/mislabeled hands — pairing uses image X, not this label.
         const label = result.handedness[i]?.[0]?.categoryName
-        if (label !== 'Left' && label !== 'Right') continue
+        const handedness = label === 'Right' ? 'Right' : 'Left'
         samples.push({
-          handedness: label,
+          handedness,
           landmarks: result.landmarks[i].map((point) => ({
             x: point.x,
             y: point.y,
