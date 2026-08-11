@@ -53,6 +53,35 @@ describe('createFrameGesture', () => {
     expect(r.phase).toBe('idle')
   })
 
+  it('smooths rect with default lerpAlpha 0.35', () => {
+    const g = createFrameGesture()
+    const leftA = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
+    const rightA = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
+    const size = { width: 1000, height: 1000 }
+    g.update([leftA, rightA], size, 0)
+
+    const leftB = hand('Left', { index: [0.32, 0.32], thumb: [0.32, 0.57] })
+    const rightB = hand('Right', { index: [0.72, 0.32], thumb: [0.72, 0.57] })
+    const r = g.update([leftB, rightB], size, 16)
+
+    expect(r.phase).toBe('active')
+    expect(r.rect!.x).toBeCloseTo(307, 0)
+    expect(r.rect!.y).toBeCloseTo(307, 0)
+    expect(r.rect!.x).not.toBeCloseTo(320, 0)
+  })
+
+  it('rejects frames with aspect ratio outside 1:3…3:1', () => {
+    const g = createFrameGesture({ lerpAlpha: 1 })
+    const size = { width: 1000, height: 1000 }
+    const tooWideLeft = hand('Left', { index: [0.05, 0.35], thumb: [0.05, 0.45] })
+    const tooWideRight = hand('Right', { index: [0.95, 0.35], thumb: [0.95, 0.45] })
+    expect(g.update([tooWideLeft, tooWideRight], size, 0).phase).toBe('idle')
+
+    const tooTallLeft = hand('Left', { index: [0.45, 0.05], thumb: [0.55, 0.05] })
+    const tooTallRight = hand('Right', { index: [0.45, 0.95], thumb: [0.55, 0.95] })
+    expect(g.update([tooTallLeft, tooTallRight], size, 0).phase).toBe('idle')
+  })
+
   it('enters fading then idle after gesture lost', () => {
     const g = createFrameGesture({ fadeMs: 250, lerpAlpha: 1 })
     const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })

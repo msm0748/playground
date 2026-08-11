@@ -8,6 +8,7 @@ import {
   PINKY_TIP,
   RING_PIP,
   RING_TIP,
+  THUMB_IP,
   THUMB_TIP,
   WRIST,
   dist2,
@@ -45,7 +46,7 @@ function isLHand(hand: HandSample): boolean {
   const lm = hand.landmarks
   if (lm.length < 21) return false
   const indexUp = isFingerExtended(lm, INDEX_TIP, INDEX_PIP)
-  const thumbOut = isFingerExtended(lm, THUMB_TIP, 3)
+  const thumbOut = isFingerExtended(lm, THUMB_TIP, THUMB_IP)
   const othersIn =
     isFingerCurled(lm, MIDDLE_TIP, MIDDLE_PIP) &&
     isFingerCurled(lm, RING_TIP, RING_PIP) &&

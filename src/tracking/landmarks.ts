@@ -1,4 +1,5 @@
 export const WRIST = 0
+export const THUMB_IP = 3
 export const THUMB_TIP = 4
 export const INDEX_TIP = 8
 export const INDEX_PIP = 6
