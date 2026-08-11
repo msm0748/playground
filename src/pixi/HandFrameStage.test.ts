@@ -19,21 +19,30 @@ describe('HandFrameStage layout', () => {
     })
   })
 
-  it('mirrors a source rect before mapping it into stage space', async () => {
-    const { mapRectToStage } = await import('./HandFrameStage')
+  it('mirrors quad corners before mapping them into stage space', async () => {
+    const { mapQuadToStage } = await import('./HandFrameStage')
 
     expect(
-      mapRectToStage(
-        { x: 100, y: 50, width: 300, height: 200 },
+      mapQuadToStage(
+        {
+          points: [
+            { x: 100, y: 50 },
+            { x: 400, y: 50 },
+            { x: 400, y: 250 },
+            { x: 100, y: 250 },
+          ],
+        },
         1280,
         { scale: 2, offsetX: -100, offsetY: 25 },
         true,
       ),
     ).toEqual({
-      x: 1660,
-      y: 125,
-      width: 600,
-      height: 400,
+      points: [
+        { x: 2260, y: 125 },
+        { x: 1660, y: 125 },
+        { x: 1660, y: 525 },
+        { x: 2260, y: 525 },
+      ],
     })
   })
 })

@@ -18,7 +18,8 @@ import type {
   FilterSettings,
   GesturePhase,
   GestureResult,
-  Rect,
+  Point,
+  Quad,
 } from '../types'
 import { CellShadeFilter } from './CellShadeFilter'
 import { registerPixi } from './extendPixi'
@@ -52,7 +53,7 @@ type StageResources = {
 
 const IDLE_GESTURE: GestureResult = {
   phase: 'idle',
-  rect: null,
+  quad: null,
   alpha: 0,
 }
 
@@ -117,21 +118,32 @@ export function getCoverLayout(
   }
 }
 
-export function mapRectToStage(
-  rect: Rect,
+function mapPointToStage(
+  point: Point,
   videoWidth: number,
   layout: CoverLayout,
   mirror: boolean,
-): Rect {
-  const sourceX = mirror
-    ? videoWidth - rect.x - rect.width
-    : rect.x
-
+): Point {
+  const sourceX = mirror ? videoWidth - point.x : point.x
   return {
     x: layout.offsetX + sourceX * layout.scale,
-    y: layout.offsetY + rect.y * layout.scale,
-    width: rect.width * layout.scale,
-    height: rect.height * layout.scale,
+    y: layout.offsetY + point.y * layout.scale,
+  }
+}
+
+export function mapQuadToStage(
+  quad: Quad,
+  videoWidth: number,
+  layout: CoverLayout,
+  mirror: boolean,
+): Quad {
+  return {
+    points: [
+      mapPointToStage(quad.points[0], videoWidth, layout, mirror),
+      mapPointToStage(quad.points[1], videoWidth, layout, mirror),
+      mapPointToStage(quad.points[2], videoWidth, layout, mirror),
+      mapPointToStage(quad.points[3], videoWidth, layout, mirror),
+    ],
   }
 }
 
@@ -276,9 +288,9 @@ function StageContent({
     stageWidth,
     stageHeight,
   )
-  const displayRect =
-    gesture.rect && videoWidth > 0
-      ? mapRectToStage(gesture.rect, videoWidth, layout, settings.mirror)
+  const displayQuad =
+    gesture.quad && videoWidth > 0
+      ? mapQuadToStage(gesture.quad, videoWidth, layout, settings.mirror)
       : null
   const spriteScale = {
     x: layout.scale * (settings.mirror ? -1 : 1),
@@ -288,33 +300,13 @@ function StageContent({
   const drawMask = useCallback(
     (graphics: Graphics) => {
       graphics.clear()
-      if (!displayRect) return
+      if (!displayQuad) return
+      const [a, b, c, d] = displayQuad.points
       graphics
-        .rect(
-          displayRect.x,
-          displayRect.y,
-          displayRect.width,
-          displayRect.height,
-        )
+        .poly([a.x, a.y, b.x, b.y, c.x, c.y, d.x, d.y])
         .fill({ color: 0xffffff })
     },
-    [displayRect],
-  )
-
-  const drawBorder = useCallback(
-    (graphics: Graphics) => {
-      graphics.clear()
-      if (!displayRect) return
-      graphics
-        .rect(
-          displayRect.x,
-          displayRect.y,
-          displayRect.width,
-          displayRect.height,
-        )
-        .stroke({ color: 0xffffff, width: 3 })
-    },
-    [displayRect],
+    [displayQuad],
   )
 
   if (!screen || !resources) return null
@@ -341,11 +333,6 @@ function StageContent({
         scale={spriteScale}
         filters={filters}
         mask={mask}
-        alpha={gesture.alpha}
-        visible={gesture.phase !== 'idle'}
-      />
-      <pixiGraphics
-        draw={drawBorder}
         alpha={gesture.alpha}
         visible={gesture.phase !== 'idle'}
       />

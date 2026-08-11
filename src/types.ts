@@ -1,15 +1,18 @@
-export type Rect = {
+export type Point = {
   x: number
   y: number
-  width: number
-  height: number
+}
+
+/** Four corners in order: left-index, right-index, right-thumb, left-thumb. */
+export type Quad = {
+  points: [Point, Point, Point, Point]
 }
 
 export type GesturePhase = 'idle' | 'active' | 'fading'
 
 export type GestureResult = {
   phase: GesturePhase
-  rect: Rect | null
+  quad: Quad | null
   alpha: number
 }
 

@@ -1,18 +1,5 @@
-import type { GestureResult, Rect } from '../types'
-import {
-  INDEX_PIP,
-  INDEX_TIP,
-  MIDDLE_PIP,
-  MIDDLE_TIP,
-  PINKY_PIP,
-  PINKY_TIP,
-  RING_PIP,
-  RING_TIP,
-  THUMB_IP,
-  THUMB_TIP,
-  WRIST,
-  dist2,
-} from './landmarks'
+import type { GestureResult, Point, Quad } from '../types'
+import { INDEX_TIP, THUMB_TIP } from './landmarks'
 
 export type LandmarkPoint = { x: number; y: number; z?: number }
 export type HandSample = {
@@ -24,62 +11,85 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
 
-function isFingerExtended(
-  landmarks: LandmarkPoint[],
-  tip: number,
-  pip: number,
-): boolean {
-  const wrist = landmarks[WRIST]
-  return dist2(landmarks[tip], wrist) > dist2(landmarks[pip], wrist)
+function lerpPoint(a: Point, b: Point, t: number): Point {
+  return { x: lerp(a.x, b.x, t), y: lerp(a.y, b.y, t) }
 }
 
-function isFingerCurled(
-  landmarks: LandmarkPoint[],
-  tip: number,
-  pip: number,
-): boolean {
-  const wrist = landmarks[WRIST]
-  return dist2(landmarks[tip], wrist) < dist2(landmarks[pip], wrist)
+function cloneQuad(quad: Quad): Quad {
+  return {
+    points: [
+      { ...quad.points[0] },
+      { ...quad.points[1] },
+      { ...quad.points[2] },
+      { ...quad.points[3] },
+    ],
+  }
 }
 
-function isLHand(hand: HandSample): boolean {
+/** Frame corners come from thumb + index tips only — no curl/extension gating. */
+function hasThumbAndIndexTips(hand: HandSample): boolean {
   const lm = hand.landmarks
   if (lm.length < 21) return false
-  const indexUp = isFingerExtended(lm, INDEX_TIP, INDEX_PIP)
-  const thumbOut = isFingerExtended(lm, THUMB_TIP, THUMB_IP)
-  const othersIn =
-    isFingerCurled(lm, MIDDLE_TIP, MIDDLE_PIP) &&
-    isFingerCurled(lm, RING_TIP, RING_PIP) &&
-    isFingerCurled(lm, PINKY_TIP, PINKY_PIP)
-  return indexUp && thumbOut && othersIn
+  const thumb = lm[THUMB_TIP]
+  const index = lm[INDEX_TIP]
+  return (
+    Number.isFinite(thumb.x) &&
+    Number.isFinite(thumb.y) &&
+    Number.isFinite(index.x) &&
+    Number.isFinite(index.y)
+  )
 }
 
-function tipsRect(
+function tipPoint(
+  hand: HandSample,
+  tip: number,
+  width: number,
+  height: number,
+): Point {
+  const p = hand.landmarks[tip]
+  return { x: p.x * width, y: p.y * height }
+}
+
+/** Order: left-index → right-index → right-thumb → left-thumb (non-axis-aligned). */
+function tipsQuad(
   left: HandSample,
   right: HandSample,
   width: number,
   height: number,
-): Rect {
-  const pts = [
-    left.landmarks[INDEX_TIP],
-    left.landmarks[THUMB_TIP],
-    right.landmarks[INDEX_TIP],
-    right.landmarks[THUMB_TIP],
-  ]
-  const xs = pts.map((p) => p.x * width)
-  const ys = pts.map((p) => p.y * height)
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+): Quad {
+  return {
+    points: [
+      tipPoint(left, INDEX_TIP, width, height),
+      tipPoint(right, INDEX_TIP, width, height),
+      tipPoint(right, THUMB_TIP, width, height),
+      tipPoint(left, THUMB_TIP, width, height),
+    ],
+  }
 }
 
-function isValidRect(rect: Rect, videoW: number, videoH: number): boolean {
-  const minSide = Math.min(videoW, videoH) * 0.08
-  if (rect.width < minSide || rect.height < minSide) return false
-  const aspect = rect.width / Math.max(rect.height, 1e-6)
-  return aspect >= 1 / 3 && aspect <= 3
+function quadBounds(quad: Quad): { width: number; height: number; area: number } {
+  const xs = quad.points.map((p) => p.x)
+  const ys = quad.points.map((p) => p.y)
+  const width = Math.max(...xs) - Math.min(...xs)
+  const height = Math.max(...ys) - Math.min(...ys)
+  // Shoelace area (absolute)
+  let area = 0
+  for (let i = 0; i < 4; i++) {
+    const a = quad.points[i]
+    const b = quad.points[(i + 1) % 4]
+    area += a.x * b.y - b.x * a.y
+  }
+  return { width, height, area: Math.abs(area) / 2 }
+}
+
+function isValidQuad(quad: Quad, videoW: number, videoH: number): boolean {
+  const { width, height, area } = quadBounds(quad)
+  const minSide = Math.min(videoW, videoH) * 0.03
+  if (width < minSide || height < minSide) return false
+  const minArea = minSide * minSide
+  if (area < minArea) return false
+  const aspect = width / Math.max(height, 1e-6)
+  return aspect >= 1 / 4 && aspect <= 4
 }
 
 export function createFrameGesture(options?: {
@@ -90,17 +100,17 @@ export function createFrameGesture(options?: {
   const lerpAlpha = options?.lerpAlpha ?? 0.35
 
   let phase: GestureResult['phase'] = 'idle'
-  let smoothed: Rect | null = null
+  let smoothed: Quad | null = null
   let fadeStartMs: number | null = null
   let lastActiveMs: number | null = null
-  let lastRect: Rect | null = null
+  let lastQuad: Quad | null = null
 
   function reset() {
     phase = 'idle'
     smoothed = null
     fadeStartMs = null
     lastActiveMs = null
-    lastRect = null
+    lastQuad = null
   }
 
   function update(
@@ -110,33 +120,29 @@ export function createFrameGesture(options?: {
   ): GestureResult {
     const left = hands.find((h) => h.handedness === 'Left')
     const right = hands.find((h) => h.handedness === 'Right')
-    const framing =
-      !!left &&
-      !!right &&
-      isLHand(left) &&
-      isLHand(right) &&
-      isValidRect(
-        tipsRect(left, right, videoSize.width, videoSize.height),
-        videoSize.width,
-        videoSize.height,
-      )
+    const raw =
+      left && right && hasThumbAndIndexTips(left) && hasThumbAndIndexTips(right)
+        ? tipsQuad(left, right, videoSize.width, videoSize.height)
+        : null
+    const framing = !!raw && isValidQuad(raw, videoSize.width, videoSize.height)
 
-    if (framing && left && right) {
-      const raw = tipsRect(left, right, videoSize.width, videoSize.height)
-      if (!smoothed) smoothed = { ...raw }
+    if (framing && raw) {
+      if (!smoothed) smoothed = cloneQuad(raw)
       else {
         smoothed = {
-          x: lerp(smoothed.x, raw.x, lerpAlpha),
-          y: lerp(smoothed.y, raw.y, lerpAlpha),
-          width: lerp(smoothed.width, raw.width, lerpAlpha),
-          height: lerp(smoothed.height, raw.height, lerpAlpha),
+          points: [
+            lerpPoint(smoothed.points[0], raw.points[0], lerpAlpha),
+            lerpPoint(smoothed.points[1], raw.points[1], lerpAlpha),
+            lerpPoint(smoothed.points[2], raw.points[2], lerpAlpha),
+            lerpPoint(smoothed.points[3], raw.points[3], lerpAlpha),
+          ],
         }
       }
       phase = 'active'
       fadeStartMs = null
       lastActiveMs = nowMs
-      lastRect = { ...smoothed }
-      return { phase, rect: lastRect, alpha: 1 }
+      lastQuad = cloneQuad(smoothed)
+      return { phase, quad: lastQuad, alpha: 1 }
     }
 
     if (phase === 'active' || phase === 'fading') {
@@ -145,13 +151,13 @@ export function createFrameGesture(options?: {
       const alpha = 1 - t
       if (t >= 1) {
         reset()
-        return { phase: 'idle', rect: null, alpha: 0 }
+        return { phase: 'idle', quad: null, alpha: 0 }
       }
       phase = 'fading'
-      return { phase, rect: lastRect, alpha }
+      return { phase, quad: lastQuad, alpha }
     }
 
-    return { phase: 'idle', rect: null, alpha: 0 }
+    return { phase: 'idle', quad: null, alpha: 0 }
   }
 
   return { update, reset }
