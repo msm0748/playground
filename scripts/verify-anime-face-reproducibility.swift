@@ -20,6 +20,12 @@ func fail(_ message: String) -> Never {
   exit(1)
 }
 
+func readAssets(in directory: URL) throws -> [String: Data] {
+  try Dictionary(uniqueKeysWithValues: assetNames.map { name in
+    (name, try Data(contentsOf: directory.appendingPathComponent(name)))
+  })
+}
+
 func runBuilder(in workingDirectory: URL, moduleCache: URL) {
   let process = Process()
   process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
@@ -48,15 +54,16 @@ let fixtureRoot = fileManager.temporaryDirectory.appendingPathComponent(
 )
 defer { try? fileManager.removeItem(at: fixtureRoot) }
 
+let checkedInBuild: [String: Data]
+do {
+  checkedInBuild = try readAssets(in: repositoryRoot.appendingPathComponent("public"))
+} catch {
+  fail("could not read checked-in assets: \(error)")
+}
+
 do {
   let fixturePublic = fixtureRoot.appendingPathComponent("public", isDirectory: true)
   try fileManager.createDirectory(at: fixturePublic, withIntermediateDirectories: true)
-  for name in assetNames {
-    try fileManager.copyItem(
-      at: repositoryRoot.appendingPathComponent("public/\(name)"),
-      to: fixturePublic.appendingPathComponent(name)
-    )
-  }
   if fileManager.fileExists(atPath: sourceDirectory.path) {
     let fixtureSources = fixtureRoot.appendingPathComponent("assets/anime-face-sources", isDirectory: true)
     try fileManager.createDirectory(
@@ -73,22 +80,25 @@ let moduleCache = fixtureRoot.appendingPathComponent("swift-module-cache", isDir
 runBuilder(in: fixtureRoot, moduleCache: moduleCache)
 let firstBuild: [String: Data]
 do {
-  firstBuild = try Dictionary(uniqueKeysWithValues: assetNames.map { name in
-    let path = fixtureRoot.appendingPathComponent("public/\(name)")
-    return (name, try Data(contentsOf: path))
-  })
+  firstBuild = try readAssets(in: fixtureRoot.appendingPathComponent("public"))
 } catch {
   fail("could not read first build: \(error)")
 }
+let mismatchedCheckedInAssets = assetNames.filter { firstBuild[$0] != checkedInBuild[$0] }
+guard mismatchedCheckedInAssets.isEmpty else {
+  fail("clean build differs from checked-in assets: \(mismatchedCheckedInAssets.joined(separator: ", "))")
+}
 
 runBuilder(in: fixtureRoot, moduleCache: moduleCache)
-let driftedAssets = assetNames.filter { name in
-  let path = fixtureRoot.appendingPathComponent("public/\(name)")
-  guard let currentBuild = try? Data(contentsOf: path) else { return true }
-  return currentBuild != firstBuild[name]
+let secondBuild: [String: Data]
+do {
+  secondBuild = try readAssets(in: fixtureRoot.appendingPathComponent("public"))
+} catch {
+  fail("could not read second build: \(error)")
 }
+let driftedAssets = assetNames.filter { secondBuild[$0] != firstBuild[$0] }
 guard driftedAssets.isEmpty else {
   fail("repeated builds changed: \(driftedAssets.joined(separator: ", "))")
 }
 
-print("Verified byte-identical repeated builds for 8 anime face assets")
+print("Verified checked-in output and byte-identical repeated builds for 8 anime face assets")
