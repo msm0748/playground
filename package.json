@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "assets:anime": "swift scripts/build-anime-face-assets.swift",
+    "assets:anime": "swift scripts/build-anime-face-assets.swift && node scripts/build-anime-face-webp.mjs",
+    "assets:anime:webp": "node scripts/build-anime-face-webp.mjs",
     "assets:anime:verify": "swift scripts/verify-anime-face-assets.swift && swift scripts/verify-anime-face-reproducibility.swift",
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -29,6 +30,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^30.0.1",
     "oxlint": "^1.75.0",
+    "sharp": "^0.35.3",
     "typescript": "~6.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
