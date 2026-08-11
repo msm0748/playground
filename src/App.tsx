@@ -61,23 +61,26 @@ function App() {
     [],
   )
 
-  const handleModeChange = useCallback((nextMode: FilterMode) => {
-    setModeResourceError(null)
-    setGesturePhase('idle')
-    setMode(nextMode)
-  }, [])
+  const handleModeChange = useCallback(
+    (nextMode: FilterMode) => {
+      if (nextMode === mode) return
+      setModeResourceError(null)
+      setMode(nextMode)
+    },
+    [mode],
+  )
 
   const handleRetryTracker = useCallback(() => {
     const retryingHandTracker = handTrackerError !== null
     if (handTrackerError) {
       setTrackerKey((key) => key + 1)
+      setGesturePhase('idle')
     }
     if (modeResourceError?.mode === mode) {
       setResourceKey((key) => key + 1)
     }
     setHandTrackerError(null)
     setModeResourceError(null)
-    setGesturePhase('idle')
     setTrackerLoading(retryingHandTracker)
   }, [handTrackerError, mode, modeResourceError])
 
