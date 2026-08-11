@@ -30,8 +30,12 @@ registerPixi()
 
 const ANIME_FACE_ASSETS: Record<AnimeExpressionKey, string> = {
   neutral: '/anime-face-overlay.png?v=3',
+  winkLeft: '/anime-face-eyes-closed.png?v=1',
+  winkRight: '/anime-face-eyes-closed.png?v=1',
   blink: '/anime-face-eyes-closed.png?v=1',
   mouth: '/anime-face-mouth-open.png?v=1',
+  winkLeftMouth: '/anime-face-blink-mouth.png?v=1',
+  winkRightMouth: '/anime-face-blink-mouth.png?v=1',
   blinkMouth: '/anime-face-blink-mouth.png?v=1',
 }
 

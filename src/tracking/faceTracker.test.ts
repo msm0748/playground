@@ -45,33 +45,31 @@ describe('expressionFromBlendshapes', () => {
 })
 
 describe('selectAnimeExpression', () => {
-  it('picks blink and mouth variants with hysteresis', () => {
-    expect(
-      selectAnimeExpression({ blinkLeft: 0.6, blinkRight: 0, jawOpen: 0.1 }),
-    ).toBe('blink')
+  it.each([
+    [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.1 }, 'neutral'],
+    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.1 }, 'winkLeft'],
+    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.1 }, 'winkRight'],
+    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.1 }, 'blink'],
+    [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.6 }, 'mouth'],
+    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.6 }, 'winkLeftMouth'],
+    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.6 }, 'winkRightMouth'],
+    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.6 }, 'blinkMouth'],
+  ] as const)('selects %s as %s', (expression, expected) => {
+    expect(selectAnimeExpression(expression)).toBe(expected)
+  })
+
+  it('holds and releases left wink independently', () => {
     expect(
       selectAnimeExpression(
-        { blinkLeft: 0.4, blinkRight: 0, jawOpen: 0.1 },
-        'blink',
+        { blinkLeft: 0.4, blinkRight: 0.1, jawOpen: 0.1 },
+        'winkLeft',
       ),
-    ).toBe(
-      'blink',
-    )
+    ).toBe('winkLeft')
     expect(
       selectAnimeExpression(
-        { blinkLeft: 0.1, blinkRight: 0, jawOpen: 0.1 },
-        'blink',
+        { blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.1 },
+        'winkLeft',
       ),
-    ).toBe(
-      'neutral',
-    )
-    expect(
-      selectAnimeExpression({ blinkLeft: 0.1, blinkRight: 0, jawOpen: 0.5 }),
-    ).toBe('mouth')
-    expect(
-      selectAnimeExpression({ blinkLeft: 0.7, blinkRight: 0, jawOpen: 0.6 }),
-    ).toBe(
-      'blinkMouth',
-    )
+    ).toBe('neutral')
   })
 })
