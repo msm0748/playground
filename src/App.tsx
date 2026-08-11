@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useCamera } from './camera/useCamera'
 import { HandFrameStage } from './pixi/HandFrameStage'
-import type { FilterSettings, GesturePhase } from './types'
-import { DEFAULT_FILTER_SETTINGS } from './types'
+import type { FilterMode, FilterSettings, GesturePhase } from './types'
+import { DEFAULT_FILTER_MODE, DEFAULT_FILTER_SETTINGS } from './types'
 import { Controls } from './ui/Controls'
 import { StatusOverlay } from './ui/StatusOverlay'
 
@@ -11,16 +11,23 @@ function App() {
   const [settings, setSettings] = useState<FilterSettings>(
     DEFAULT_FILTER_SETTINGS,
   )
+  const [mode, setMode] = useState<FilterMode>(DEFAULT_FILTER_MODE)
   const [paused, setPaused] = useState(
     () => document.visibilityState === 'hidden',
   )
-  const [trackerError, setTrackerError] = useState<string | null>(null)
+  const [handTrackerError, setHandTrackerError] = useState<string | null>(null)
+  const [modeResourceError, setModeResourceError] = useState<{
+    mode: FilterMode
+    message: string
+  } | null>(null)
   const [trackerLoading, setTrackerLoading] = useState(false)
   const [trackerKey, setTrackerKey] = useState(0)
+  const [resourceKey, setResourceKey] = useState(0)
   const [gesturePhase, setGesturePhase] = useState<GesturePhase>('idle')
 
   useEffect(() => {
-    setTrackerError(null)
+    setHandTrackerError(null)
+    setModeResourceError(null)
     setGesturePhase('idle')
     setTrackerLoading(state.status === 'live')
   }, [state.status])
@@ -41,17 +48,45 @@ function App() {
     setGesturePhase(phase)
   }, [])
 
-  const handleTrackerError = useCallback((message: string) => {
+  const handleHandTrackerError = useCallback((message: string) => {
     setTrackerLoading(false)
-    setTrackerError(message)
+    setHandTrackerError(message)
   }, [])
 
+  const handleModeResourceError = useCallback(
+    (errorMode: FilterMode, message: string) => {
+      setTrackerLoading(false)
+      setModeResourceError({ mode: errorMode, message })
+    },
+    [],
+  )
+
+  const handleModeChange = useCallback(
+    (nextMode: FilterMode) => {
+      if (nextMode === mode) return
+      setModeResourceError(null)
+      setMode(nextMode)
+    },
+    [mode],
+  )
+
   const handleRetryTracker = useCallback(() => {
-    setTrackerError(null)
-    setGesturePhase('idle')
-    setTrackerLoading(true)
-    setTrackerKey((key) => key + 1)
-  }, [])
+    const retryingHandTracker = handTrackerError !== null
+    if (handTrackerError) {
+      setTrackerKey((key) => key + 1)
+      setGesturePhase('idle')
+    }
+    if (modeResourceError?.mode === mode) {
+      setResourceKey((key) => key + 1)
+    }
+    setHandTrackerError(null)
+    setModeResourceError(null)
+    setTrackerLoading(retryingHandTracker)
+  }, [handTrackerError, mode, modeResourceError])
+
+  const trackerError =
+    handTrackerError ??
+    (modeResourceError?.mode === mode ? modeResourceError.message : null)
 
   return (
     <main className="app">
@@ -65,15 +100,20 @@ function App() {
       {state.status === 'live' && (
         <HandFrameStage
           videoRef={videoRef}
+          mode={mode}
           settings={settings}
           paused={paused}
           trackerKey={trackerKey}
+          resourceKey={resourceKey}
           onPhaseChange={handlePhaseChange}
-          onTrackerError={handleTrackerError}
+          onHandTrackerError={handleHandTrackerError}
+          onModeResourceError={handleModeResourceError}
         />
       )}
       <Controls
+        mode={mode}
         settings={settings}
+        onModeChange={handleModeChange}
         onChange={setSettings}
         onRestartCamera={() => void restart()}
       />

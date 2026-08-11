@@ -1,21 +1,29 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FilterSettings } from './types'
+import type { FilterMode, FilterSettings } from './types'
 
 type StageProps = {
+  mode: FilterMode
   settings: FilterSettings
   paused: boolean
   trackerKey?: number
-  onTrackerError?: (message: string) => void
+  resourceKey?: number
+  onPhaseChange?: (phase: 'idle' | 'active' | 'fading') => void
+  onHandTrackerError?: (message: string) => void
+  onModeResourceError?: (mode: FilterMode, message: string) => void
 }
 
 const mocks = vi.hoisted(() => ({
   restart: vi.fn(),
   stageProps: [] as Array<{
+    mode: FilterMode
     settings: FilterSettings
     paused: boolean
     trackerKey?: number
-    onTrackerError?: (message: string) => void
+    resourceKey?: number
+    onPhaseChange?: (phase: 'idle' | 'active' | 'fading') => void
+    onHandTrackerError?: (message: string) => void
+    onModeResourceError?: (mode: FilterMode, message: string) => void
   }>,
 }))
 
@@ -47,13 +55,17 @@ describe('App controls and visibility', () => {
     })
   })
 
-  it('passes live settings and tab visibility to the stage', async () => {
+  it('updates the selected filter mode and passes tab visibility to the stage', async () => {
     render(<App />)
 
-    fireEvent.change(screen.getByRole('slider', { name: '셀 강도' }), {
-      target: { value: '8' },
-    })
-    expect(mocks.stageProps.at(-1)?.settings.levels).toBe(8)
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 모드' }))
+    expect(
+      screen.getByRole('button', { name: '프롬프트 모드' }).getAttribute(
+        'aria-pressed',
+      ),
+    ).toBe('true')
+    expect(mocks.stageProps.at(-1)?.mode).toBe('prompt')
+    expect(mocks.restart).not.toHaveBeenCalled()
 
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
@@ -64,17 +76,14 @@ describe('App controls and visibility', () => {
     await waitFor(() => {
       expect(mocks.stageProps.at(-1)?.paused).toBe(true)
     })
-
-    fireEvent.click(screen.getByRole('button', { name: '카메라 재시작' }))
-    expect(mocks.restart).toHaveBeenCalledOnce()
   })
 
-  it('recreates the tracker on retry without restarting the camera', async () => {
+  it('retries a shared hand-tracker failure without restarting the camera or mode resources', async () => {
     render(<App />)
 
     expect(mocks.stageProps.at(-1)?.trackerKey).toBe(0)
 
-    const reportError = mocks.stageProps.at(-1)?.onTrackerError
+    const reportError = mocks.stageProps.at(-1)?.onHandTrackerError
     expect(reportError).toBeTypeOf('function')
     act(() => {
       reportError?.('모델을 불러올 수 없습니다')
@@ -89,7 +98,82 @@ describe('App controls and visibility', () => {
     await waitFor(() => {
       expect(mocks.stageProps.at(-1)?.trackerKey).toBe(1)
     })
+    expect(mocks.stageProps.at(-1)?.resourceKey).toBe(0)
     expect(mocks.restart).not.toHaveBeenCalled()
     expect(screen.getByText('모델 로딩 중…')).toBeTruthy()
+  })
+
+  it('retries only the failed resources for the active mode', async () => {
+    render(<App />)
+
+    act(() => {
+      mocks.stageProps.at(-1)?.onPhaseChange?.('active')
+    })
+    act(() => {
+      mocks.stageProps.at(-1)?.onModeResourceError?.(
+        'png',
+        'PNG 에셋을 불러올 수 없습니다',
+      )
+    })
+    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    await waitFor(() => {
+      expect(mocks.stageProps.at(-1)?.resourceKey).toBe(1)
+    })
+    expect(mocks.stageProps.at(-1)?.trackerKey).toBe(0)
+    expect(mocks.restart).not.toHaveBeenCalled()
+    expect(screen.queryByText('모델 로딩 중…')).toBeNull()
+    expect(screen.queryByText('양손으로 프레임을 만들어 보세요')).toBeNull()
+  })
+
+  it('preserves an active gesture when the filter mode changes', () => {
+    render(<App />)
+    act(() => {
+      mocks.stageProps.at(-1)?.onPhaseChange?.('active')
+    })
+    expect(screen.queryByText('양손으로 프레임을 만들어 보세요')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 모드' }))
+
+    expect(screen.queryByText('양손으로 프레임을 만들어 보세요')).toBeNull()
+    expect(mocks.stageProps.at(-1)?.trackerKey).toBe(0)
+  })
+
+  it('clears an error owned by the departed mode', () => {
+    render(<App />)
+
+    act(() => {
+      mocks.stageProps.at(-1)?.onModeResourceError?.(
+        'png',
+        'PNG 에셋을 불러올 수 없습니다',
+      )
+    })
+    expect(screen.getByRole('alert').textContent).toBe(
+      'PNG 에셋을 불러올 수 없습니다',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '프롬프트 모드' }))
+
+    expect(screen.queryByText('PNG 에셋을 불러올 수 없습니다')).toBeNull()
+    expect(screen.queryByText('모델 로딩 중…')).toBeNull()
+    expect(mocks.stageProps.at(-1)?.mode).toBe('prompt')
+  })
+
+  it('keeps the active mode error when its already-selected button is clicked', () => {
+    render(<App />)
+    act(() => {
+      mocks.stageProps.at(-1)?.onModeResourceError?.(
+        'png',
+        'PNG 에셋을 불러올 수 없습니다',
+      )
+    })
+    const resourceKey = mocks.stageProps.at(-1)?.resourceKey
+
+    fireEvent.click(screen.getByRole('button', { name: 'PNG 모드' }))
+
+    expect(screen.getByRole('alert').textContent).toBe(
+      'PNG 에셋을 불러올 수 없습니다',
+    )
+    expect(mocks.stageProps.at(-1)?.resourceKey).toBe(resourceKey)
   })
 })

@@ -1,10 +1,5 @@
 import { Application, useApplication } from '@pixi/react'
-import {
-  Assets,
-  Graphics,
-  Texture,
-  VideoSource,
-} from 'pixi.js'
+import { Assets, Graphics, Texture, VideoSource } from 'pixi.js'
 import {
   useCallback,
   useEffect,
@@ -13,10 +8,18 @@ import {
   useState,
   type RefObject,
 } from 'react'
-import { createFaceTracker, selectAnimeExpression, type AnimeExpressionKey, type FacePose, type FaceSample, type FaceTracker } from '../tracking/faceTracker'
+import {
+  createFaceTracker,
+  selectAnimeExpression,
+  type AnimeExpressionKey,
+  type FacePose,
+  type FaceSample,
+  type FaceTracker,
+} from '../tracking/faceTracker'
 import { createFrameGesture } from '../tracking/frameGesture'
 import { createHandTracker, type HandTracker } from '../tracking/handTracker'
 import type {
+  FilterMode,
   FilterSettings,
   GesturePhase,
   GestureResult,
@@ -25,6 +28,7 @@ import type {
 } from '../types'
 import { CellShadeFilter } from './CellShadeFilter'
 import { registerPixi } from './extendPixi'
+import { PromptCelFilter } from './PromptCelFilter'
 
 registerPixi()
 
@@ -45,24 +49,44 @@ type CoverLayout = {
   offsetY: number
 }
 
-type HandFrameStageProps = {
+export type HandFrameStageProps = {
   videoRef: RefObject<HTMLVideoElement | null>
+  mode: FilterMode
   settings: FilterSettings
   paused: boolean
   /** Bumping this recreates the hand tracker without restarting the camera. */
   trackerKey?: number
+  /** Bumping this recreates resources owned by the active filter mode. */
+  resourceKey?: number
   onPhaseChange?: (phase: GesturePhase) => void
-  onTrackerError?: (message: string) => void
+  onHandTrackerError?: (message: string) => void
+  onModeResourceError?: (mode: FilterMode, message: string) => void
 }
 
 type StageContentProps = Omit<HandFrameStageProps, 'videoRef'> & {
   video: HTMLVideoElement
 }
 
-type StageResources = {
+export type ModeResources =
+  | {
+      mode: 'png'
+      filter: CellShadeFilter
+      animeTextures: Record<AnimeExpressionKey, Texture>
+      releaseTextures: () => Promise<void>
+    }
+  | { mode: 'prompt'; filter: PromptCelFilter }
+
+type AnimeTextureLoader = (src: string) => Promise<Texture>
+type AnimeTextureUnloader = (src: string) => Promise<void>
+type FaceTrackerFactory = () => Promise<FaceTracker>
+
+export type AnimeTextureLease = {
   texture: Texture
-  filter: CellShadeFilter
-  animeTextures: Record<AnimeExpressionKey, Texture>
+  release: () => Promise<void>
+}
+
+export type AnimeTexturePool = {
+  acquire: (src: string) => Promise<AnimeTextureLease>
 }
 
 type AnimeTransform = {
@@ -80,6 +104,189 @@ const IDLE_GESTURE: GestureResult = {
 
 /** Detection hiccups are common while the GPU delegate warms up, so tolerate a few. */
 export const MAX_CONSECUTIVE_DETECT_FAILURES = 5
+
+export function capabilitiesForMode(mode: FilterMode): {
+  animeAssets: boolean
+  faceTracking: boolean
+  promptFilter: boolean
+} {
+  return mode === 'png'
+    ? { animeAssets: true, faceTracking: true, promptFilter: false }
+    : { animeAssets: false, faceTracking: false, promptFilter: true }
+}
+
+async function loadAnimeTexture(src: string): Promise<Texture> {
+  return (await Assets.load({
+    alias: src,
+    src,
+    data: { alphaMode: 'premultiply-alpha-on-upload' },
+  })) as Texture
+}
+
+async function unloadAnimeTexture(src: string): Promise<void> {
+  await Assets.unload(src)
+}
+
+export function createAnimeTexturePool(
+  loadTexture: AnimeTextureLoader,
+  unloadTexture: AnimeTextureUnloader,
+): AnimeTexturePool {
+  type Entry = {
+    references: number
+    loadPromise: Promise<Texture>
+    unloadPromise: Promise<void> | null
+  }
+
+  const entries = new Map<string, Entry>()
+
+  const releaseEntry = (src: string, entry: Entry): Promise<void> => {
+    entry.references -= 1
+    if (entry.references > 0) return Promise.resolve()
+
+    const unloadPromise = (async () => {
+      try {
+        await entry.loadPromise
+        await unloadTexture(src)
+      } finally {
+        if (entries.get(src) === entry) entries.delete(src)
+      }
+    })()
+    entry.unloadPromise = unloadPromise
+    return unloadPromise
+  }
+
+  return {
+    async acquire(src: string): Promise<AnimeTextureLease> {
+      while (true) {
+        let entry = entries.get(src)
+        if (entry?.unloadPromise) {
+          try {
+            await entry.unloadPromise
+          } catch {
+            // The retired entry is removed in the unload promise's finally block.
+            // Its release caller owns reporting; acquisition can start fresh.
+          }
+          continue
+        }
+
+        if (!entry) {
+          entry = {
+            references: 0,
+            loadPromise: loadTexture(src),
+            unloadPromise: null,
+          }
+          entries.set(src, entry)
+        }
+
+        entry.references += 1
+        let texture: Texture
+        try {
+          texture = await entry.loadPromise
+        } catch (error) {
+          entry.references -= 1
+          if (entry.references === 0 && entries.get(src) === entry) {
+            entries.delete(src)
+          }
+          throw error
+        }
+
+        let released = false
+        return {
+          texture,
+          release: () => {
+            if (released) return Promise.resolve()
+            released = true
+            return releaseEntry(src, entry)
+          },
+        }
+      }
+    },
+  }
+}
+
+const animeTexturePool = createAnimeTexturePool(
+  loadAnimeTexture,
+  unloadAnimeTexture,
+)
+
+export async function createModeResources(
+  mode: FilterMode,
+  texturePool: AnimeTexturePool = animeTexturePool,
+): Promise<ModeResources> {
+  if (mode === 'prompt') {
+    return { mode, filter: new PromptCelFilter() }
+  }
+
+  const keys = Object.keys(ANIME_FACE_ASSETS) as AnimeExpressionKey[]
+  const acquired = await Promise.allSettled(
+    keys.map((key) => texturePool.acquire(ANIME_FACE_ASSETS[key])),
+  )
+  const failed = acquired.find(
+    (result): result is PromiseRejectedResult => result.status === 'rejected',
+  )
+  if (failed) {
+    const cleanupResults = await Promise.allSettled(
+      acquired.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value.release()] : [],
+      ),
+    )
+    cleanupResults.forEach((result) => {
+      if (result.status === 'rejected') {
+        reportModeResourceCleanupError(result.reason)
+      }
+    })
+    throw failed.reason
+  }
+
+  const leases = acquired.map((result) =>
+    (result as PromiseFulfilledResult<AnimeTextureLease>).value,
+  )
+  const entries = keys.map(
+    (key, index) => [key, leases[index].texture] as const,
+  )
+  let released = false
+
+  return {
+    mode,
+    filter: new CellShadeFilter(),
+    animeTextures: Object.fromEntries(entries) as Record<
+      AnimeExpressionKey,
+      Texture
+    >,
+    releaseTextures: async () => {
+      if (released) return
+      released = true
+      await Promise.all(leases.map((lease) => lease.release()))
+    },
+  }
+}
+
+export async function destroyModeResources(
+  resources: ModeResources,
+): Promise<void> {
+  resources.filter.destroy()
+  if (resources.mode === 'png') await resources.releaseTextures()
+}
+
+function reportModeResourceCleanupError(error: unknown): void {
+  console.error('필터 리소스를 해제하지 못했습니다', error)
+}
+
+function disposeModeResources(resources: ModeResources): void {
+  void destroyModeResources(resources).catch(reportModeResourceCleanupError)
+}
+
+export async function createFaceTrackerForMode(
+  mode: FilterMode,
+  factory: FaceTrackerFactory = createFaceTracker,
+): Promise<FaceTracker | null> {
+  if (mode !== 'png') return null
+  return factory()
+}
+
+export function capRenderingResolution(devicePixelRatio: number): number {
+  return Math.min(devicePixelRatio, 1.5)
+}
 
 export function createDetectFailureGuard(
   limit: number = MAX_CONSECUTIVE_DETECT_FAILURES,
@@ -220,13 +427,16 @@ function errorMessage(error: unknown): string {
     : '손 추적 모델을 불러올 수 없습니다'
 }
 
-function StageContent({
+export function StageContent({
   video,
+  mode,
   settings,
   paused,
   trackerKey = 0,
+  resourceKey = 0,
   onPhaseChange,
-  onTrackerError,
+  onHandTrackerError,
+  onModeResourceError,
 }: StageContentProps) {
   const { app } = useApplication()
   const [gesture, setGesture] = useState<GestureResult>(IDLE_GESTURE)
@@ -234,72 +444,108 @@ function StageContent({
   const [expressionKey, setExpressionKey] =
     useState<AnimeExpressionKey>('neutral')
   const [mask, setMask] = useState<Graphics | null>(null)
-  const [resources, setResources] = useState<StageResources | null>(null)
+  const [videoTexture, setVideoTexture] = useState<Texture | null>(null)
+  const [modeResources, setModeResources] = useState<ModeResources | null>(null)
   const settingsRef = useRef(settings)
   const pausedRef = useRef(paused)
+  const modeRef = useRef(mode)
+  const modeResourcesRef = useRef(modeResources)
+  const faceTrackerRef = useRef<FaceTracker | null>(null)
   const phaseCallbackRef = useRef(onPhaseChange)
-  const errorCallbackRef = useRef(onTrackerError)
+  const handErrorCallbackRef = useRef(onHandTrackerError)
+  const modeErrorCallbackRef = useRef(onModeResourceError)
   const expressionKeyRef = useRef<AnimeExpressionKey>('neutral')
+  const activeModeResources =
+    modeResources?.mode === mode ? modeResources : null
   const filters = useMemo(
-    () => (resources ? [resources.filter] : []),
-    [resources],
+    () => (activeModeResources ? [activeModeResources.filter] : []),
+    [activeModeResources],
   )
 
   settingsRef.current = settings
   pausedRef.current = paused
+  modeRef.current = mode
+  modeResourcesRef.current = activeModeResources
   phaseCallbackRef.current = onPhaseChange
-  errorCallbackRef.current = onTrackerError
+  handErrorCallbackRef.current = onHandTrackerError
+  modeErrorCallbackRef.current = onModeResourceError
+
+  useEffect(() => {
+    const texture = createVideoTexture(video)
+    setVideoTexture(texture)
+
+    return () => {
+      releaseVideoTexture(texture)
+    }
+  }, [video])
 
   useEffect(() => {
     let cancelled = false
-    let created: StageResources | null = null
+    let created: ModeResources | null = null
+    setModeResources(null)
 
-    void Promise.all(
-      (Object.keys(ANIME_FACE_ASSETS) as AnimeExpressionKey[]).map(async (key) => {
-        const src = ANIME_FACE_ASSETS[key]
-        const texture = (await Assets.load({
-          alias: src,
-          src,
-          data: { alphaMode: 'premultiply-alpha-on-upload' },
-        })) as Texture
-        return [key, texture] as const
-      }),
-    )
-      .then((entries) => {
-        if (cancelled) return
-        created = {
-          texture: createVideoTexture(video),
-          filter: new CellShadeFilter(),
-          animeTextures: Object.fromEntries(entries) as Record<
-            AnimeExpressionKey,
-            Texture
-          >,
+    void createModeResources(mode)
+      .then((nextResources) => {
+        created = nextResources
+        if (cancelled) {
+          disposeModeResources(nextResources)
+          return
         }
-        setResources(created)
+        setModeResources(nextResources)
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          errorCallbackRef.current?.(errorMessage(error))
+          modeErrorCallbackRef.current?.(mode, errorMessage(error))
         }
       })
 
     return () => {
       cancelled = true
       if (created) {
-        created.filter.destroy()
-        releaseVideoTexture(created.texture)
+        disposeModeResources(created)
       }
     }
-  }, [video])
+  }, [mode, resourceKey])
 
   useEffect(() => {
-    if (!resources) return
+    if (mode !== 'png') {
+      faceTrackerRef.current?.close()
+      faceTrackerRef.current = null
+      setFaceSample(null)
+      setExpressionKey('neutral')
+      expressionKeyRef.current = 'neutral'
+      return
+    }
 
-    const { texture, filter } = resources
+    let cancelled = false
+    void createFaceTrackerForMode(mode)
+      .then((tracker) => {
+        if (!tracker) return
+        if (cancelled) {
+          tracker.close()
+          return
+        }
+        faceTrackerRef.current = tracker
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          modeErrorCallbackRef.current?.(mode, errorMessage(error))
+        }
+      })
+
+    return () => {
+      cancelled = true
+      faceTrackerRef.current?.close()
+      faceTrackerRef.current = null
+    }
+  }, [mode, resourceKey, trackerKey])
+
+  useEffect(() => {
+    if (!videoTexture) return
+
     let cancelled = false
     let animationFrameId: number | null = null
     let handTracker: HandTracker | null = null
-    let faceTracker: FaceTracker | null = null
     let lastPhase: GesturePhase = 'idle'
     const frameGesture = createFrameGesture()
     const failureGuard = createDetectFailureGuard()
@@ -314,7 +560,7 @@ function StageContent({
         video.videoHeight > 0
       ) {
         try {
-          texture.source.update()
+          videoTexture.source.update()
           const hands = handTracker.detect(video, nowMs)
           const nextGesture = frameGesture.update(
             hands,
@@ -322,9 +568,9 @@ function StageContent({
             nowMs,
           )
           const nextFace =
-            nextGesture.phase === 'idle'
+            modeRef.current !== 'png' || nextGesture.phase === 'idle'
               ? null
-              : (faceTracker?.detect(video, nowMs) ?? null)
+              : (faceTrackerRef.current?.detect(video, nowMs) ?? null)
           const nextExpression = nextFace
             ? selectAnimeExpression(
                 nextFace.expression,
@@ -333,10 +579,13 @@ function StageContent({
             : 'neutral'
           expressionKeyRef.current = nextExpression
 
-          const currentSettings = settingsRef.current
-          filter.levels = currentSettings.levels
-          filter.edgeStrength = currentSettings.edgeStrength
-          filter.tint = currentSettings.tint
+          const currentResources = modeResourcesRef.current
+          if (currentResources?.mode === 'png') {
+            const currentSettings = settingsRef.current
+            currentResources.filter.levels = currentSettings.levels
+            currentResources.filter.edgeStrength = currentSettings.edgeStrength
+            currentResources.filter.tint = currentSettings.tint
+          }
 
           setGesture(nextGesture)
           setFaceSample(nextFace)
@@ -349,7 +598,7 @@ function StageContent({
           }
         } catch (error) {
           if (failureGuard.recordFailure()) {
-            errorCallbackRef.current?.(errorMessage(error))
+            handErrorCallbackRef.current?.(errorMessage(error))
             frameGesture.reset()
             setGesture(IDLE_GESTURE)
             setFaceSample(null)
@@ -357,8 +606,8 @@ function StageContent({
             expressionKeyRef.current = 'neutral'
             handTracker.close()
             handTracker = null
-            faceTracker?.close()
-            faceTracker = null
+            faceTrackerRef.current?.close()
+            faceTrackerRef.current = null
             return
           }
         }
@@ -367,22 +616,20 @@ function StageContent({
       animationFrameId = requestAnimationFrame(runFrame)
     }
 
-    void Promise.all([createHandTracker(), createFaceTracker()])
-      .then(([createdHandTracker, createdFaceTracker]) => {
+    void createHandTracker()
+      .then((createdHandTracker) => {
         if (cancelled) {
           createdHandTracker.close()
-          createdFaceTracker.close()
           return
         }
 
         handTracker = createdHandTracker
-        faceTracker = createdFaceTracker
         phaseCallbackRef.current?.('idle')
         animationFrameId = requestAnimationFrame(runFrame)
       })
       .catch((error: unknown) => {
         if (!cancelled) {
-          errorCallbackRef.current?.(errorMessage(error))
+          handErrorCallbackRef.current?.(errorMessage(error))
         }
       })
 
@@ -392,10 +639,9 @@ function StageContent({
         cancelAnimationFrame(animationFrameId)
       }
       handTracker?.close()
-      faceTracker?.close()
       frameGesture.reset()
     }
-  }, [resources, trackerKey, video])
+  }, [trackerKey, video, videoTexture])
 
   const videoWidth = video.videoWidth
   const videoHeight = video.videoHeight
@@ -416,13 +662,15 @@ function StageContent({
     x: layout.scale * (settings.mirror ? -1 : 1),
     y: layout.scale,
   }
+  const pngResources =
+    activeModeResources?.mode === 'png' ? activeModeResources : null
   const animeTexture =
-    resources?.animeTextures[expressionKey] ??
-    resources?.animeTextures.neutral ??
+    pngResources?.animeTextures[expressionKey] ??
+    pngResources?.animeTextures.neutral ??
     null
   const facePose = faceSample?.pose ?? null
   const animeTransform =
-    resources && animeTexture && gesture.quad && videoWidth > 0
+    pngResources && animeTexture && gesture.quad && videoWidth > 0
       ? facePose
         ? animeTransformFromFace(
             facePose,
@@ -452,12 +700,12 @@ function StageContent({
     [displayQuad],
   )
 
-  if (!screen || !resources || !animeTexture) return null
+  if (!screen || !videoTexture) return null
 
   return (
     <>
       <pixiSprite
-        texture={resources.texture}
+        texture={videoTexture}
         anchor={0.5}
         x={stageWidth / 2}
         y={stageHeight / 2}
@@ -468,18 +716,33 @@ function StageContent({
         draw={drawMask}
         visible={gesture.phase !== 'idle'}
       />
-      <pixiSprite
-        texture={resources.texture}
-        anchor={0.5}
-        x={stageWidth / 2}
-        y={stageHeight / 2}
-        scale={spriteScale}
-        filters={filters}
-        mask={mask}
-        alpha={gesture.alpha * 0.35}
-        visible={gesture.phase !== 'idle'}
-      />
-      {animeTransform && (
+      {pngResources && (
+        <pixiSprite
+          texture={videoTexture}
+          anchor={0.5}
+          x={stageWidth / 2}
+          y={stageHeight / 2}
+          scale={spriteScale}
+          filters={filters}
+          mask={mask}
+          alpha={gesture.alpha * 0.35}
+          visible={gesture.phase !== 'idle'}
+        />
+      )}
+      {activeModeResources?.mode === 'prompt' && (
+        <pixiSprite
+          texture={videoTexture}
+          anchor={0.5}
+          x={stageWidth / 2}
+          y={stageHeight / 2}
+          scale={spriteScale}
+          filters={filters}
+          mask={mask}
+          alpha={gesture.alpha}
+          visible={gesture.phase !== 'idle'}
+        />
+      )}
+      {pngResources && animeTexture && animeTransform && (
         <pixiSprite
           texture={animeTexture}
           anchor={0.5}
@@ -501,11 +764,14 @@ function StageContent({
 
 export function HandFrameStage({
   videoRef,
+  mode,
   settings,
   paused,
   trackerKey,
+  resourceKey,
   onPhaseChange,
-  onTrackerError,
+  onHandTrackerError,
+  onModeResourceError,
 }: HandFrameStageProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const video = videoRef.current
@@ -517,16 +783,19 @@ export function HandFrameStage({
         backgroundColor={0x111111}
         antialias
         autoDensity
-        resolution={window.devicePixelRatio}
+        resolution={capRenderingResolution(window.devicePixelRatio)}
       >
         {video && (
           <StageContent
             video={video}
+            mode={mode}
             settings={settings}
             paused={paused}
             trackerKey={trackerKey}
+            resourceKey={resourceKey}
             onPhaseChange={onPhaseChange}
-            onTrackerError={onTrackerError}
+            onHandTrackerError={onHandTrackerError}
+            onModeResourceError={onModeResourceError}
           />
         )}
       </Application>

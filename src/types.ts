@@ -23,6 +23,10 @@ export type FilterSettings = {
   mirror: boolean
 }
 
+export type FilterMode = 'png' | 'prompt'
+
+export const DEFAULT_FILTER_MODE: FilterMode = 'png'
+
 export const DEFAULT_FILTER_SETTINGS: FilterSettings = {
   levels: 5,
   edgeStrength: 0.65,

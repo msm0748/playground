@@ -1,48 +1,18 @@
 import type { ChangeEvent } from 'react'
-import type { FilterSettings } from '../types'
+import type { FilterMode, FilterSettings } from '../types'
 
-type ControlsProps = {
+export type ControlsProps = {
+  mode: FilterMode
   settings: FilterSettings
+  onModeChange: (mode: FilterMode) => void
   onChange: (settings: FilterSettings) => void
   onRestartCamera: () => void
 }
 
-type SliderProps = {
-  label: string
-  value: number
-  min: number
-  max: number
-  step: number
-  onChange: (value: number) => void
-}
-
-function Slider({
-  label,
-  value,
-  min,
-  max,
-  step,
-  onChange,
-}: SliderProps) {
-  return (
-    <label className="controls__field">
-      <span>{label}</span>
-      <output>{value}</output>
-      <input
-        type="range"
-        aria-label={label}
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(event) => onChange(Number(event.target.value))}
-      />
-    </label>
-  )
-}
-
 export function Controls({
+  mode,
   settings,
+  onModeChange,
   onChange,
   onRestartCamera,
 }: ControlsProps) {
@@ -59,30 +29,26 @@ export function Controls({
 
   return (
     <aside className="controls" aria-label="필터 설정">
-      <Slider
-        label="셀 강도"
-        value={settings.levels}
-        min={2}
-        max={8}
-        step={1}
-        onChange={(value) => update('levels', value)}
-      />
-      <Slider
-        label="윤곽선"
-        value={settings.edgeStrength}
-        min={0}
-        max={1}
-        step={0.01}
-        onChange={(value) => update('edgeStrength', value)}
-      />
-      <Slider
-        label="틴트"
-        value={settings.tint}
-        min={-0.5}
-        max={0.5}
-        step={0.01}
-        onChange={(value) => update('tint', value)}
-      />
+      <div className="controls__modes" role="group" aria-label="필터 선택">
+        <button
+          type="button"
+          aria-label="PNG 모드"
+          aria-pressed={mode === 'png'}
+          onClick={() => onModeChange('png')}
+        >
+          <strong>PNG 모드</strong>
+          <span>표정이 움직이는 애니메 얼굴</span>
+        </button>
+        <button
+          type="button"
+          aria-label="프롬프트 모드"
+          aria-pressed={mode === 'prompt'}
+          onClick={() => onModeChange('prompt')}
+        >
+          <strong>프롬프트 모드</strong>
+          <span>실시간 셀 애니 카메라</span>
+        </button>
+      </div>
       <label className="controls__toggle">
         <input
           type="checkbox"
