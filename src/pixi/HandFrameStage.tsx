@@ -160,7 +160,12 @@ export function createAnimeTexturePool(
       while (true) {
         let entry = entries.get(src)
         if (entry?.unloadPromise) {
-          await entry.unloadPromise
+          try {
+            await entry.unloadPromise
+          } catch {
+            // The retired entry is removed in the unload promise's finally block.
+            // Its release caller owns reporting; acquisition can start fresh.
+          }
           continue
         }
 
@@ -220,11 +225,16 @@ export async function createModeResources(
     (result): result is PromiseRejectedResult => result.status === 'rejected',
   )
   if (failed) {
-    await Promise.all(
+    const cleanupResults = await Promise.allSettled(
       acquired.flatMap((result) =>
         result.status === 'fulfilled' ? [result.value.release()] : [],
       ),
     )
+    cleanupResults.forEach((result) => {
+      if (result.status === 'rejected') {
+        reportModeResourceCleanupError(result.reason)
+      }
+    })
     throw failed.reason
   }
 
@@ -256,6 +266,14 @@ export async function destroyModeResources(
 ): Promise<void> {
   resources.filter.destroy()
   if (resources.mode === 'png') await resources.releaseTextures()
+}
+
+function reportModeResourceCleanupError(error: unknown): void {
+  console.error('필터 리소스를 해제하지 못했습니다', error)
+}
+
+function disposeModeResources(resources: ModeResources): void {
+  void destroyModeResources(resources).catch(reportModeResourceCleanupError)
 }
 
 export async function createFaceTrackerForMode(
@@ -470,7 +488,7 @@ export function StageContent({
       .then((nextResources) => {
         created = nextResources
         if (cancelled) {
-          void destroyModeResources(nextResources)
+          disposeModeResources(nextResources)
           return
         }
         setModeResources(nextResources)
@@ -484,7 +502,7 @@ export function StageContent({
     return () => {
       cancelled = true
       if (created) {
-        void destroyModeResources(created)
+        disposeModeResources(created)
       }
     }
   }, [mode, resourceKey])

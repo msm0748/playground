@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const lifecycleMocks = vi.hoisted(() => ({
   createHandTracker: vi.fn(),
@@ -57,6 +57,10 @@ beforeEach(() => {
   lifecycleMocks.unloadAsset.mockResolvedValue(undefined)
   vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
   vi.stubGlobal('cancelAnimationFrame', vi.fn())
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('HandFrameStage layout', () => {
@@ -219,6 +223,66 @@ describe('anime texture lifecycle', () => {
     await nextLease.release()
   })
 
+  it('reloads a fresh generation when the prior final unload rejects', async () => {
+    const { createAnimeTexturePool } = await import('./HandFrameStage')
+    let failUnload: ((error: Error) => void) | undefined
+    const unloadGate = new Promise<void>((_resolve, reject) => {
+      failUnload = reject
+    })
+    const load = vi.fn(async () => ({ width: 512, height: 512 }) as never)
+    const unload = vi
+      .fn()
+      .mockImplementationOnce(() => unloadGate)
+      .mockResolvedValue(undefined)
+    const pool = createAnimeTexturePool(load, unload)
+    const first = await pool.acquire('/face.png')
+
+    const releasing = first.release()
+    const nextLeasePromise = pool.acquire('/face.png')
+    failUnload?.(new Error('GPU release failed'))
+
+    await expect(releasing).rejects.toThrow('GPU release failed')
+    const nextLease = await nextLeasePromise
+    expect(load).toHaveBeenCalledTimes(2)
+    await nextLease.release()
+  })
+
+  it('releases every successful lease after a partial PNG load failure and preserves that failure', async () => {
+    const { createModeResources } = await import('./HandFrameStage')
+    const loadFailure = new Error('wink texture failed')
+    const cleanupFailure = new Error('cleanup failed')
+    const reportCleanup = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const releases: Array<ReturnType<typeof vi.fn>> = []
+    let acquisition = 0
+    const texturePool = {
+      acquire: vi.fn(async () => {
+        acquisition += 1
+        if (acquisition === 3) throw loadFailure
+        const currentAcquisition = acquisition
+        const release = vi.fn(async () => {
+          if (currentAcquisition === 1) throw cleanupFailure
+        })
+        releases.push(release)
+        return {
+          texture: { width: 512, height: 512 } as never,
+          release,
+        }
+      }),
+    }
+
+    await expect(createModeResources('png', texturePool)).rejects.toBe(
+      loadFailure,
+    )
+    expect(releases).toHaveLength(7)
+    expect(releases.every((release) => release.mock.calls.length === 1)).toBe(
+      true,
+    )
+    expect(reportCleanup).toHaveBeenCalledWith(
+      '필터 리소스를 해제하지 못했습니다',
+      cleanupFailure,
+    )
+  })
+
   it('keeps the mounted hand tracker across a mode switch and releases PNG assets', async () => {
     const { ANIME_FACE_ASSETS, StageContent } =
       await import('./HandFrameStage')
@@ -304,6 +368,46 @@ describe('anime texture lifecycle', () => {
       )
     })
     expect(lifecycleMocks.createHandTracker).toHaveBeenCalledTimes(1)
+    view.unmount()
+  })
+
+  it('reports cleanup rejection without surfacing a stale mode error', async () => {
+    const { ANIME_FACE_ASSETS, StageContent } =
+      await import('./HandFrameStage')
+    const cleanupFailure = new Error('GPU release failed')
+    lifecycleMocks.unloadAsset.mockRejectedValue(cleanupFailure)
+    const reportModeError = vi.fn()
+    const reportCleanup = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const video = document.createElement('video')
+    const common = {
+      video,
+      settings: {
+        levels: 5,
+        edgeStrength: 0.65,
+        tint: 0.1,
+        mirror: true,
+      },
+      paused: false,
+      onModeResourceError: reportModeError,
+    }
+    const view = render(
+      createElement(StageContent, { ...common, mode: 'png' }),
+    )
+    await waitFor(() => {
+      expect(lifecycleMocks.loadAsset).toHaveBeenCalledTimes(
+        Object.keys(ANIME_FACE_ASSETS).length,
+      )
+    })
+
+    view.rerender(createElement(StageContent, { ...common, mode: 'prompt' }))
+
+    await waitFor(() => {
+      expect(reportCleanup).toHaveBeenCalledWith(
+        '필터 리소스를 해제하지 못했습니다',
+        cleanupFailure,
+      )
+    })
+    expect(reportModeError).not.toHaveBeenCalled()
     view.unmount()
   })
 
