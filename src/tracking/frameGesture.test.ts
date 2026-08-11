@@ -96,48 +96,65 @@ describe('createFrameGesture', () => {
     expect(r.quad!.points[0].x).not.toBeCloseTo(320, 0)
   })
 
-  it('holds the last frame at full strength through a brief detection gap', () => {
+  it('holds the last frame at full strength while a hand stays in view', () => {
     const g = createFrameGesture({ holdMs: 400, fadeMs: 250, lerpAlpha: 1 })
     const size = { width: 1000, height: 1000 }
     const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
     const right = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
     const active = g.update([left, right], size, 0)
 
-    const gap = g.update([], size, 200)
+    // One hand cannot build a quad, but it must not drop the frame either.
+    const gap = g.update([left], size, 200)
     expect(gap.phase).toBe('active')
     expect(gap.alpha).toBe(1)
     expect(gap.quad).toEqual(active.quad)
-
-    // One hand cannot build a quad, but it must not drop the frame either.
-    expect(g.update([left], size, 300).phase).toBe('active')
 
     const recovered = g.update([left, right], size, 380)
     expect(recovered.phase).toBe('active')
     expect(recovered.alpha).toBe(1)
   })
 
-  it('fades only after the hold window expires', () => {
+  it('fades a half-tracked frame only after the hold window expires', () => {
     const g = createFrameGesture({ holdMs: 400, fadeMs: 250, lerpAlpha: 1 })
     const size = { width: 1000, height: 1000 }
     const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
     const right = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
     g.update([left, right], size, 0)
 
-    expect(g.update([], size, 399).phase).toBe('active')
-    const fading = g.update([], size, 500)
+    expect(g.update([left], size, 399).phase).toBe('active')
+    const fading = g.update([left], size, 500)
     expect(fading.phase).toBe('fading')
     expect(fading.alpha).toBeCloseTo(0.6, 5)
-    expect(g.update([], size, 650).phase).toBe('idle')
+    expect(g.update([left], size, 650).phase).toBe('idle')
   })
 
-  it('defaults to holding the frame before it fades', () => {
-    const g = createFrameGesture({ lerpAlpha: 1 })
+  it('releases immediately once both hands leave the view', () => {
+    const g = createFrameGesture({ holdMs: 400, fadeMs: 250, lerpAlpha: 1 })
     const size = { width: 1000, height: 1000 }
     const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
     const right = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
     g.update([left, right], size, 0)
 
-    expect(g.update([], size, 250).phase).toBe('active')
+    // No hold: the fade starts on the first frame with nothing to track.
+    const fading = g.update([], size, 16)
+    expect(fading.phase).toBe('fading')
+    expect(fading.alpha).toBeLessThan(1)
+    expect(g.update([], size, 250).phase).toBe('idle')
+  })
+
+  it('starts the fade where the hands left, even mid-hold', () => {
+    const g = createFrameGesture({ holdMs: 400, fadeMs: 250, lerpAlpha: 1 })
+    const size = { width: 1000, height: 1000 }
+    const left = hand('Left', { index: [0.3, 0.3], thumb: [0.3, 0.55] })
+    const right = hand('Right', { index: [0.7, 0.3], thumb: [0.7, 0.55] })
+    g.update([left, right], size, 0)
+    expect(g.update([left], size, 200).phase).toBe('active')
+
+    // Hands gone at 200ms, so the fade runs 200 → 450 rather than jumping.
+    const fading = g.update([], size, 325)
+    expect(fading.phase).toBe('fading')
+    expect(fading.alpha).toBeCloseTo(0.5, 5)
+    expect(g.update([], size, 450).phase).toBe('idle')
   })
 
   it('enters fading then idle after gesture lost', () => {

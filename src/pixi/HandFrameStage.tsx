@@ -9,7 +9,6 @@ import {
   type RefObject,
 } from 'react'
 import {
-  createFaceSampleHold,
   createFaceTracker,
   selectAnimeExpression,
   type AnimeExpressionKey,
@@ -652,7 +651,6 @@ export function StageContent({
     let handTracker: HandTracker | null = null
     let lastPhase: GesturePhase = 'idle'
     const frameGesture = createFrameGesture()
-    const faceHold = createFaceSampleHold()
     const failureGuard = createDetectFailureGuard()
 
     const runFrame = (nowMs: number) => {
@@ -672,15 +670,10 @@ export function StageContent({
             { width: video.videoWidth, height: video.videoHeight },
             nowMs,
           )
-          const trackingFace =
-            modeRef.current === 'png' && nextGesture.phase !== 'idle'
-          if (!trackingFace) faceHold.reset()
-          const nextFace = trackingFace
-            ? faceHold.update(
-                faceTrackerRef.current?.detect(video, nowMs) ?? null,
-                nowMs,
-              )
-            : null
+          const nextFace =
+            modeRef.current !== 'png' || nextGesture.phase === 'idle'
+              ? null
+              : (faceTrackerRef.current?.detect(video, nowMs) ?? null)
           const nextExpression = nextFace
             ? selectAnimeExpression(
                 nextFace.expression,
@@ -710,7 +703,6 @@ export function StageContent({
           if (failureGuard.recordFailure()) {
             handErrorCallbackRef.current?.(errorMessage(error))
             frameGesture.reset()
-            faceHold.reset()
             setGesture(IDLE_GESTURE)
             setFaceSample(null)
             setExpressionKey('neutral')
@@ -751,7 +743,6 @@ export function StageContent({
       }
       handTracker?.close()
       frameGesture.reset()
-      faceHold.reset()
     }
   }, [trackerKey, video, videoTexture])
 

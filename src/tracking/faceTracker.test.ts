@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createFaceSampleHold,
+  BLINK_ON,
   expressionFromBlendshapes,
   poseFromLandmarks,
   selectAnimeExpression,
-  type FaceSample,
 } from './faceTracker'
 
 function blankMesh() {
@@ -34,48 +33,6 @@ describe('poseFromLandmarks', () => {
   })
 })
 
-describe('createFaceSampleHold', () => {
-  const sample = (x: number): FaceSample => ({
-    pose: { center: { x, y: 100 }, width: 200, height: 240, rotation: 0 },
-    expression: { blinkLeft: 0, blinkRight: 0, jawOpen: 0 },
-  })
-
-  it('keeps the last face through a short detection gap', () => {
-    const hold = createFaceSampleHold(300)
-    const first = sample(500)
-
-    expect(hold.update(first, 0)).toBe(first)
-    expect(hold.update(null, 100)).toBe(first)
-    expect(hold.update(null, 300)).toBe(first)
-  })
-
-  it('drops the face once the hold window expires', () => {
-    const hold = createFaceSampleHold(300)
-
-    hold.update(sample(500), 0)
-    expect(hold.update(null, 301)).toBeNull()
-    expect(hold.update(null, 302)).toBeNull()
-  })
-
-  it('measures the window from the newest detection, not the first', () => {
-    const hold = createFaceSampleHold(300)
-    const latest = sample(600)
-
-    hold.update(sample(500), 0)
-    expect(hold.update(latest, 250)).toBe(latest)
-    expect(hold.update(null, 500)).toBe(latest)
-    expect(hold.update(null, 600)).toBeNull()
-  })
-
-  it('forgets the held face after a reset', () => {
-    const hold = createFaceSampleHold(300)
-
-    hold.update(sample(500), 0)
-    hold.reset()
-    expect(hold.update(null, 10)).toBeNull()
-  })
-})
-
 describe('expressionFromBlendshapes', () => {
   it('preserves left and right blink scores alongside jawOpen', () => {
     expect(
@@ -91,21 +48,63 @@ describe('expressionFromBlendshapes', () => {
 describe('selectAnimeExpression', () => {
   it.each([
     [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.1 }, 'neutral'],
-    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.1 }, 'winkLeft'],
-    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.1 }, 'winkRight'],
-    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.1 }, 'blink'],
+    [{ blinkLeft: 0.9, blinkRight: 0.1, jawOpen: 0.1 }, 'winkLeft'],
+    [{ blinkLeft: 0.1, blinkRight: 0.9, jawOpen: 0.1 }, 'winkRight'],
+    [{ blinkLeft: 0.9, blinkRight: 0.9, jawOpen: 0.1 }, 'blink'],
     [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.6 }, 'mouth'],
-    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.6 }, 'winkLeftMouth'],
-    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.6 }, 'winkRightMouth'],
-    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.6 }, 'blinkMouth'],
+    [{ blinkLeft: 0.9, blinkRight: 0.1, jawOpen: 0.6 }, 'winkLeftMouth'],
+    [{ blinkLeft: 0.1, blinkRight: 0.9, jawOpen: 0.6 }, 'winkRightMouth'],
+    [{ blinkLeft: 0.9, blinkRight: 0.9, jawOpen: 0.6 }, 'blinkMouth'],
   ] as const)('selects %s as %s', (expression, expected) => {
     expect(selectAnimeExpression(expression)).toBe(expected)
+  })
+
+  it.each([0.2, 0.35, 0.45, 0.5])(
+    'keeps the eyes open for a partial blink of %s',
+    (score) => {
+      expect(
+        selectAnimeExpression({
+          blinkLeft: score,
+          blinkRight: score,
+          jawOpen: 0.1,
+        }),
+      ).toBe('neutral')
+    },
+  )
+
+  it('closes the eyes once the blink clears the squint range', () => {
+    expect(BLINK_ON).toBeGreaterThan(0.5)
+    expect(
+      selectAnimeExpression({
+        blinkLeft: BLINK_ON,
+        blinkRight: BLINK_ON,
+        jawOpen: 0.1,
+      }),
+    ).toBe('blink')
+  })
+
+  it('reopens the eyes once the blink relaxes past the release point', () => {
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.3, blinkRight: 0.3, jawOpen: 0.1 },
+        'blink',
+      ),
+    ).toBe('neutral')
+  })
+
+  it('keeps the eyes closed while the blink relaxes inside the hysteresis gap', () => {
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.45, blinkRight: 0.45, jawOpen: 0.1 },
+        'blink',
+      ),
+    ).toBe('blink')
   })
 
   it('holds and releases left wink independently', () => {
     expect(
       selectAnimeExpression(
-        { blinkLeft: 0.4, blinkRight: 0.1, jawOpen: 0.1 },
+        { blinkLeft: 0.6, blinkRight: 0.1, jawOpen: 0.1 },
         'winkLeft',
       ),
     ).toBe('winkLeft')

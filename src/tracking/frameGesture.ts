@@ -53,9 +53,8 @@ function handCenterX(hand: HandSample): number {
  * Pair by image X instead: leftmost hand + rightmost hand.
  */
 function pairHandsByPosition(
-  hands: HandSample[],
+  usable: HandSample[],
 ): [HandSample, HandSample] | null {
-  const usable = hands.filter(hasThumbAndIndexTips)
   if (usable.length < 2) return null
   const sorted = [...usable].sort((a, b) => handCenterX(a) - handCenterX(b))
   return [sorted[0], sorted[sorted.length - 1]]
@@ -148,6 +147,7 @@ export function createFrameGesture(options?: {
   let smoothed: Quad | null = null
   let fadeStartMs: number | null = null
   let lastActiveMs: number | null = null
+  let lastVisibleMs: number | null = null
   let lastQuad: Quad | null = null
 
   function reset() {
@@ -155,6 +155,7 @@ export function createFrameGesture(options?: {
     smoothed = null
     fadeStartMs = null
     lastActiveMs = null
+    lastVisibleMs = null
     lastQuad = null
   }
 
@@ -163,7 +164,9 @@ export function createFrameGesture(options?: {
     videoSize: { width: number; height: number },
     nowMs: number,
   ): GestureResult {
-    const paired = pairHandsByPosition(hands)
+    const usable = hands.filter(hasThumbAndIndexTips)
+    if (usable.length > 0) lastVisibleMs = nowMs
+    const paired = pairHandsByPosition(usable)
     const keeping = phase === 'active' || phase === 'fading'
     const minSideRatio = keeping ? keepMinSideRatio : enterMinSideRatio
     const raw = paired
@@ -194,12 +197,21 @@ export function createFrameGesture(options?: {
 
     if (phase === 'active' || phase === 'fading') {
       const lostSinceMs = lastActiveMs ?? nowMs
-      // Hold the last frame at full strength while detection recovers.
-      if (phase === 'active' && nowMs - lostSinceMs < holdMs) {
+      /**
+       * A hand still in view means MediaPipe only lost the pair for a moment,
+       * so hold. Nothing in view is the user putting their hands down: release
+       * straight away, fading from the frame the hands left.
+       */
+      const recoverable = usable.length > 0
+      if (phase === 'active' && recoverable && nowMs - lostSinceMs < holdMs) {
         return { phase, quad: lastQuad, alpha: 1 }
       }
 
-      if (fadeStartMs === null) fadeStartMs = lostSinceMs + holdMs
+      if (fadeStartMs === null) {
+        fadeStartMs = recoverable
+          ? lostSinceMs + holdMs
+          : (lastVisibleMs ?? lostSinceMs)
+      }
       const t = Math.min(1, (nowMs - fadeStartMs) / fadeMs)
       const alpha = 1 - t
       if (t >= 1) {

@@ -45,36 +45,6 @@ export type FaceTracker = {
   close: () => void
 }
 
-/** Detection drops for a frame or two on fast head turns; bridge those gaps. */
-export const FACE_HOLD_MS = 300
-
-export type FaceSampleHold = {
-  update: (sample: FaceSample | null, nowMs: number) => FaceSample | null
-  reset: () => void
-}
-
-/**
- * Keeps the last detected face for a short window so a missed frame does not
- * make anything anchored to the face blink out and back.
- */
-export function createFaceSampleHold(holdMs: number = FACE_HOLD_MS): FaceSampleHold {
-  let last: { sample: FaceSample; atMs: number } | null = null
-
-  return {
-    update(sample, nowMs) {
-      if (sample) {
-        last = { sample, atMs: nowMs }
-        return sample
-      }
-      if (last && nowMs - last.atMs <= holdMs) return last.sample
-      last = null
-      return null
-    },
-    reset() {
-      last = null
-    },
-  }
-}
 
 export type AnimeExpressionKey =
   | 'neutral'
@@ -165,13 +135,30 @@ function held(score: number, wasOn: boolean, on: number, off: number): boolean {
   return wasOn
 }
 
+/**
+ * A squint or a downward glance lands around 0.4–0.5, so entering above that
+ * keeps half-closed eyes open without demanding a picture-perfect blink.
+ */
+export const BLINK_ON = 0.55
+export const BLINK_OFF = 0.35
+
 /** Hysteresis keeps each expression channel from flickering around its threshold. */
 export function selectAnimeExpression(
   expression: FaceExpression,
   previous: AnimeExpressionKey = 'neutral',
 ): AnimeExpressionKey {
-  const leftClosed = held(expression.blinkLeft, LEFT_CLOSED.has(previous), 0.5, 0.22)
-  const rightClosed = held(expression.blinkRight, RIGHT_CLOSED.has(previous), 0.5, 0.22)
+  const leftClosed = held(
+    expression.blinkLeft,
+    LEFT_CLOSED.has(previous),
+    BLINK_ON,
+    BLINK_OFF,
+  )
+  const rightClosed = held(
+    expression.blinkRight,
+    RIGHT_CLOSED.has(previous),
+    BLINK_ON,
+    BLINK_OFF,
+  )
   const mouthOpen = held(expression.jawOpen, MOUTH_OPEN.has(previous), 0.35, 0.15)
 
   if (leftClosed && rightClosed) return mouthOpen ? 'blinkMouth' : 'blink'
