@@ -28,7 +28,9 @@ export type FacePose = {
 
 export type FaceExpression = {
   /** 0..1, higher means eyes more closed. */
-  blink: number
+  blinkLeft: number
+  /** 0..1, higher means eyes more closed. */
+  blinkRight: number
   /** 0..1, higher means mouth more open. */
   jawOpen: number
 }
@@ -45,9 +47,23 @@ export type FaceTracker = {
 
 export type AnimeExpressionKey =
   | 'neutral'
+  | 'winkLeft'
+  | 'winkRight'
   | 'blink'
   | 'mouth'
+  | 'winkLeftMouth'
+  | 'winkRightMouth'
   | 'blinkMouth'
+
+const LEFT_CLOSED = new Set<AnimeExpressionKey>([
+  'winkLeft', 'blink', 'winkLeftMouth', 'blinkMouth',
+])
+const RIGHT_CLOSED = new Set<AnimeExpressionKey>([
+  'winkRight', 'blink', 'winkRightMouth', 'blinkMouth',
+])
+const MOUTH_OPEN = new Set<AnimeExpressionKey>([
+  'mouth', 'winkLeftMouth', 'winkRightMouth', 'blinkMouth',
+])
 
 function landmarkPoint(
   landmarks: Array<{ x: number; y: number }>,
@@ -105,41 +121,32 @@ function scoreByName(
 export function expressionFromBlendshapes(
   categories: Array<{ categoryName?: string; score?: number }> | undefined,
 ): FaceExpression {
-  const blinkLeft = scoreByName(categories, 'eyeBlinkLeft')
-  const blinkRight = scoreByName(categories, 'eyeBlinkRight')
-  const jawOpen = scoreByName(categories, 'jawOpen')
   return {
-    blink: Math.max(blinkLeft, blinkRight),
-    jawOpen,
+    blinkLeft: scoreByName(categories, 'eyeBlinkLeft'),
+    blinkRight: scoreByName(categories, 'eyeBlinkRight'),
+    jawOpen: scoreByName(categories, 'jawOpen'),
   }
 }
 
-/** Hysteresis keeps blink/mouth from flickering around the threshold. */
+function held(score: number, wasOn: boolean, on: number, off: number): boolean {
+  if (score >= on) return true
+  if (score <= off) return false
+  return wasOn
+}
+
+/** Hysteresis keeps each expression channel from flickering around its threshold. */
 export function selectAnimeExpression(
   expression: FaceExpression,
   previous: AnimeExpressionKey = 'neutral',
 ): AnimeExpressionKey {
-  const blinkOn = previous === 'blink' || previous === 'blinkMouth' ? 0.35 : 0.5
-  const blinkOff = previous === 'blink' || previous === 'blinkMouth' ? 0.22 : 0.5
-  const mouthOn = previous === 'mouth' || previous === 'blinkMouth' ? 0.25 : 0.35
-  const mouthOff = previous === 'mouth' || previous === 'blinkMouth' ? 0.15 : 0.35
+  const leftClosed = held(expression.blinkLeft, LEFT_CLOSED.has(previous), 0.5, 0.22)
+  const rightClosed = held(expression.blinkRight, RIGHT_CLOSED.has(previous), 0.5, 0.22)
+  const mouthOpen = held(expression.jawOpen, MOUTH_OPEN.has(previous), 0.35, 0.15)
 
-  const blink =
-    expression.blink >= blinkOn
-      ? true
-      : expression.blink <= blinkOff
-        ? false
-        : previous === 'blink' || previous === 'blinkMouth'
-  const mouth =
-    expression.jawOpen >= mouthOn
-      ? true
-      : expression.jawOpen <= mouthOff
-        ? false
-        : previous === 'mouth' || previous === 'blinkMouth'
-
-  if (blink && mouth) return 'blinkMouth'
-  if (blink) return 'blink'
-  if (mouth) return 'mouth'
+  if (leftClosed && rightClosed) return mouthOpen ? 'blinkMouth' : 'blink'
+  if (leftClosed) return mouthOpen ? 'winkLeftMouth' : 'winkLeft'
+  if (rightClosed) return mouthOpen ? 'winkRightMouth' : 'winkRight'
+  if (mouthOpen) return 'mouth'
   return 'neutral'
 }
 

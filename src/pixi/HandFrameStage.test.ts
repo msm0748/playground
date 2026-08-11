@@ -9,6 +9,21 @@ vi.mock('@pixi/react', () => ({
 }))
 
 describe('HandFrameStage layout', () => {
+  it('registers a distinct texture URL for every anime expression', async () => {
+    const { ANIME_FACE_ASSETS } = await import('./HandFrameStage')
+
+    expect(ANIME_FACE_ASSETS).toEqual({
+      neutral: '/anime-face-overlay.png?v=4',
+      blink: '/anime-face-eyes-closed.png?v=2',
+      mouth: '/anime-face-mouth-open.png?v=2',
+      blinkMouth: '/anime-face-blink-mouth.png?v=2',
+      winkLeft: '/anime-face-wink-left.png?v=1',
+      winkRight: '/anime-face-wink-right.png?v=1',
+      winkLeftMouth: '/anime-face-wink-left-mouth.png?v=1',
+      winkRightMouth: '/anime-face-wink-right-mouth.png?v=1',
+    })
+  })
+
   it('covers the stage while preserving the video aspect ratio', async () => {
     const { getCoverLayout } = await import('./HandFrameStage')
 

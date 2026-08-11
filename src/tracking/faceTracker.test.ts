@@ -33,29 +33,43 @@ describe('poseFromLandmarks', () => {
 })
 
 describe('expressionFromBlendshapes', () => {
-  it('reads blink and jawOpen scores', () => {
+  it('preserves left and right blink scores alongside jawOpen', () => {
     expect(
       expressionFromBlendshapes([
         { categoryName: 'eyeBlinkLeft', score: 0.2 },
         { categoryName: 'eyeBlinkRight', score: 0.8 },
         { categoryName: 'jawOpen', score: 0.55 },
       ]),
-    ).toEqual({ blink: 0.8, jawOpen: 0.55 })
+    ).toEqual({ blinkLeft: 0.2, blinkRight: 0.8, jawOpen: 0.55 })
   })
 })
 
 describe('selectAnimeExpression', () => {
-  it('picks blink and mouth variants with hysteresis', () => {
-    expect(selectAnimeExpression({ blink: 0.6, jawOpen: 0.1 })).toBe('blink')
-    expect(selectAnimeExpression({ blink: 0.4, jawOpen: 0.1 }, 'blink')).toBe(
-      'blink',
-    )
-    expect(selectAnimeExpression({ blink: 0.1, jawOpen: 0.1 }, 'blink')).toBe(
-      'neutral',
-    )
-    expect(selectAnimeExpression({ blink: 0.1, jawOpen: 0.5 })).toBe('mouth')
-    expect(selectAnimeExpression({ blink: 0.7, jawOpen: 0.6 })).toBe(
-      'blinkMouth',
-    )
+  it.each([
+    [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.1 }, 'neutral'],
+    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.1 }, 'winkLeft'],
+    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.1 }, 'winkRight'],
+    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.1 }, 'blink'],
+    [{ blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.6 }, 'mouth'],
+    [{ blinkLeft: 0.7, blinkRight: 0.1, jawOpen: 0.6 }, 'winkLeftMouth'],
+    [{ blinkLeft: 0.1, blinkRight: 0.7, jawOpen: 0.6 }, 'winkRightMouth'],
+    [{ blinkLeft: 0.7, blinkRight: 0.7, jawOpen: 0.6 }, 'blinkMouth'],
+  ] as const)('selects %s as %s', (expression, expected) => {
+    expect(selectAnimeExpression(expression)).toBe(expected)
+  })
+
+  it('holds and releases left wink independently', () => {
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.4, blinkRight: 0.1, jawOpen: 0.1 },
+        'winkLeft',
+      ),
+    ).toBe('winkLeft')
+    expect(
+      selectAnimeExpression(
+        { blinkLeft: 0.1, blinkRight: 0.1, jawOpen: 0.1 },
+        'winkLeft',
+      ),
+    ).toBe('neutral')
   })
 })
