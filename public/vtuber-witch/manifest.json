@@ -1,0 +1,21 @@
+{
+  "canvas": { "width": 1024, "height": 1024, "format": "webp", "alpha": true },
+  "layers": [
+    "hair-back",
+    "body",
+    "face-base",
+    "ear",
+    "eye-left",
+    "eye-right",
+    "eyebrow",
+    "mouth",
+    "hair-front",
+    "hat",
+    "accessory"
+  ],
+  "variants": {
+    "eyes": ["open", "blink", "wink-left", "wink-right", "happy", "surprised"],
+    "mouth": ["neutral", "smile", "open", "small-o", "sad"],
+    "eyebrow": ["neutral", "raised", "angry", "sad"]
+  }
+}
